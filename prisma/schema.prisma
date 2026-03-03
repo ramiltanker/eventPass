@@ -7,9 +7,29 @@ datasource db {
   provider = "postgresql"
 }
 
+enum UserRole {
+  TEACHER
+}
+
 model User {
-  id        Int      @id @default(autoincrement())
-  email     String   @unique
-  name      String?
-  createdAt DateTime @default(now())
+  id           String   @id @default(cuid())
+  email        String   @unique
+  firstName    String
+  lastName     String
+  middleName   String
+  passwordHash String
+  role         UserRole @default(TEACHER)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model TeacherInvite {
+  id        String    @id @default(cuid())
+  email     String    @unique
+  tokenHash String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([expiresAt])
 }

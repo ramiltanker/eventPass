@@ -1,0 +1,62 @@
+import {
+  Body,
+  Controller,
+  Get,
+  Headers,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
+import { AuthService } from './auth.service';
+import { CreateInviteDto } from './dto/create-invite.dto';
+import { RegisterDto } from './dto/register.dto';
+import { LoginDto } from './dto/login.dto';
+import {
+  CurrentUser,
+  CurrentUserType,
+} from './decorators/current-user.decorator';
+import { JwtAuthGuard } from './jwt/jwt-auth.guard';
+
+@Controller('auth')
+export class AuthController {
+  constructor(private auth: AuthService) {}
+
+  @Post('invites')
+  async createInvite(
+    @Headers('x-admin-secret') adminSecret: string | undefined,
+    @Body() dto: CreateInviteDto,
+  ) {
+    this.auth.assertAdminSecret(adminSecret);
+
+    const { token, expiresAt } = await this.auth.createInvite(
+      dto.email,
+      dto.expiresInDays ?? 7,
+    );
+
+    // В MVP вернём ссылку (потом отправим email)
+    return {
+      inviteUrl: `http://localhost:3000/register?token=${token}`,
+      expiresAt,
+    };
+  }
+
+  @Post('validate-invite')
+  async validateInvite(@Body() body: { token: string }) {
+    return this.auth.validateInvite(body.token);
+  }
+
+  @Post('register')
+  async register(@Body() dto: RegisterDto) {
+    return this.auth.registerByInvite(dto);
+  }
+
+  @Post('login')
+  async login(@Body() dto: LoginDto) {
+    return this.auth.login(dto.email, dto.password);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('me')
+  async me(@CurrentUser() user: CurrentUserType) {
+    return this.auth.me(user.userId);
+  }
+}
