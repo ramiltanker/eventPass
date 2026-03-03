@@ -1,8 +1,8 @@
-import { Body, Controller, Get, Post } from "@nestjs/common";
-import { ConsultationsService } from "./consultations.service";
-import { CreateConsultationDto } from "./dto/create-consultation.dto";
+import { Body, Controller, Get, Post } from '@nestjs/common';
+import { ConsultationsService } from './consultations.service';
+import { CreateConsultationDto } from './dto/create-consultation.dto';
 
-@Controller("consultations")
+@Controller('consultations')
 export class ConsultationsController {
   constructor(private readonly service: ConsultationsService) {}
 
