@@ -6,13 +6,13 @@ import { CreateConsultationDto } from './dto/create-consultation.dto';
 export class ConsultationsService {
   constructor(private prisma: PrismaService) {}
 
-  async create(dto: CreateConsultationDto) {
-    // ВАЖНО: User.id у тебя String (cuid), поэтому teacherId тоже должен быть String
-    // Временно: подставь реальный teacherId из БД (лучше взять из JWT позже)
-    const teacherId = 'TEMP_TEACHER_ID';
-
+  async create(teacherId: string, dto: CreateConsultationDto) {
     const startsAt = new Date(dto.startsAt);
     const endsAt = new Date(dto.endsAt);
+
+    if (!teacherId || String(teacherId).trim().length === 0) {
+      throw new BadRequestException('teacherId is required');
+    }
 
     if (Number.isNaN(startsAt.getTime())) {
       throw new BadRequestException('Invalid startsAt');
@@ -23,7 +23,6 @@ export class ConsultationsService {
     if (endsAt <= startsAt) {
       throw new BadRequestException('endsAt must be after startsAt');
     }
-
     if (startsAt <= new Date()) {
       throw new BadRequestException('Consultation must start in the future');
     }
@@ -35,11 +34,7 @@ export class ConsultationsService {
     }
 
     const slots: { startsAt: Date; endsAt: Date }[] = [];
-    for (
-      let t = startsAt.getTime();
-      t + slotMs <= endsAt.getTime();
-      t += slotMs
-    ) {
+    for (let t = startsAt.getTime(); t + slotMs <= endsAt.getTime(); t += slotMs) {
       slots.push({ startsAt: new Date(t), endsAt: new Date(t + slotMs) });
     }
     if (slots.length === 0) {
@@ -54,7 +49,6 @@ export class ConsultationsService {
         slotDurationMinutes: dto.slotDurationMinutes,
         meetingLink: dto.meetingLink,
         description: dto.description,
-        isOpen: dto.isOpen ?? true,
         teacherId,
         slots: {
           create: slots.map((s) => ({
@@ -73,7 +67,6 @@ export class ConsultationsService {
   async listOpen() {
     const items = await this.prisma.consultation.findMany({
       where: {
-        isOpen: true,
         startsAt: { gte: new Date() },
       },
       orderBy: { startsAt: 'asc' },
@@ -93,14 +86,20 @@ export class ConsultationsService {
       },
     });
 
-    return items.map((c) => ({
-      id: c.id,
-      subject: c.subject,
-      startsAt: c.startsAt,
-      endsAt: c.endsAt,
-      teacherName:
-        `${c.teacher.lastName} ${c.teacher.firstName} ${c.teacher.middleName}`.trim(),
-      teacherAvatarUrl: null,
-    }));
+    return items.map((c) => {
+      const parts = [c.teacher.lastName, c.teacher.firstName, c.teacher.middleName].filter(
+        (x) => !!x && String(x).trim().length > 0,
+      );
+      const teacherName = parts.length > 0 ? parts.join(' ') : c.teacher.email;
+
+      return {
+        id: c.id,
+        subject: c.subject,
+        startsAt: c.startsAt,
+        endsAt: c.endsAt,
+        teacherName,
+        teacherAvatarUrl: null,
+      };
+    });
   }
 }

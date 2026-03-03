@@ -16,7 +16,7 @@ model User {
   email         String         @unique
   firstName     String
   lastName      String
-  middleName    String
+  middleName    String?
   passwordHash  String
   role          UserRole       @default(TEACHER)
   createdAt     DateTime       @default(now())
@@ -43,7 +43,6 @@ model Consultation {
   slotDurationMinutes Int
   meetingLink         String
   description         String?
-  isOpen              Boolean  @default(true)
 
   teacherId String
   teacher   User   @relation(fields: [teacherId], references: [id], onDelete: Cascade)

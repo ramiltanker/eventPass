@@ -22,7 +22,4 @@ export class CreateConsultationDto {
   @IsString()
   description?: string;
 
-  @IsOptional()
-  @IsBoolean()
-  isOpen?: boolean;
 }
