@@ -4,6 +4,13 @@ Backend-приложение на **Node.js + NestJS**.
 
 ---
 
+## 🛠 Стек
+
+- Node.js
+- TypeScript
+- Prisma ORM v7
+- PostgreSQL (Docker)
+
 ## 📦 Требования
 
 - Node.js >= 18
@@ -16,7 +23,9 @@ node -v
 npm -v
 ```
 
-## ⚙️ Требования
+## ⚙️ Запуск проекта
+
+### Клонирование репозитория, установка зависимостей
 
 ```bash
 git clone <repo-url>
@@ -24,7 +33,47 @@ cd my-backend
 npm install
 ```
 
-## 🧪 Требования
+### Запуск PostgreSQL в Docker
+
+```bash
+docker compose up -d
+```
+
+Проверить, что контейнер запущен:
+
+```bash
+docker ps
+```
+
+Должен быть контейнер:
+
+```bash
+event-pass-postgres
+```
+
+### Переменные окружения
+
+Создать .env в корне проекта:
+
+```bash
+DATABASE_URL="postgresql://admin:root@localhost:5432/my_backend?schema=public"
+```
+
+### Prisma
+
+Генерация клиента
+
+```bash
+npx prisma generate
+```
+
+Применение миграций
+
+```bash
+npx prisma migrate dev --name init
+```
+
+## 🧪 Запуск
 
 ```bash
 npm run start:dev
