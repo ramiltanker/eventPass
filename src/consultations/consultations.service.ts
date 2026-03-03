@@ -50,4 +50,42 @@ export class ConsultationsService {
 
     return { id: created.id, slotsCreated: created.slots.length };
   }
+
+  async listOpen() {
+    const items = await prisma.consultation.findMany({
+      where: {
+        isOpen: true,
+        startsAt: {
+          gte: new Date(),
+        },
+      },
+      orderBy: {
+        startsAt: "asc",
+      },
+      select: {
+        id: true,
+        subject: true,
+        startsAt: true,
+        endsAt: true,
+        teacher: {
+          select: {
+            name: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    return items.map((c) => ({
+      id: c.id,
+      subject: c.subject,
+      startsAt: c.startsAt,
+      endsAt: c.endsAt,
+      teacherName:
+        c.teacher.name && c.teacher.name.trim().length > 0
+          ? c.teacher.name.trim()
+          : c.teacher.email,
+      teacherAvatarUrl: null,
+    }));
+  }
 }
