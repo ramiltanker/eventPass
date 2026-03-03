@@ -6,13 +6,32 @@ datasource db {
   provider = "postgresql"
 }
 
-model User {
-  id        Int      @id @default(autoincrement())
-  email     String   @unique
-  name      String?
-  createdAt DateTime @default(now())
+enum UserRole {
+  TEACHER
+}
 
+model User {
+  id            String         @id @default(cuid())
+  email         String         @unique
+  firstName     String
+  lastName      String
+  middleName    String
+  passwordHash  String
+  role          UserRole       @default(TEACHER)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
   consultations Consultation[]
+}
+
+model TeacherInvite {
+  id        String    @id @default(cuid())
+  email     String    @unique
+  tokenHash String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([expiresAt])
 }
 
 model Consultation {
@@ -25,19 +44,19 @@ model Consultation {
   description         String?
   isOpen              Boolean  @default(true)
 
-  teacherId Int
-  teacher   User      @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  teacherId String
+  teacher   User   @relation(fields: [teacherId], references: [id], onDelete: Cascade)
 
-  slots     Slot[]
+  slots Slot[]
 
-  createdAt DateTime  @default(now())
+  createdAt DateTime @default(now())
 }
 
 model Slot {
-  id             Int      @id @default(autoincrement())
-  startsAt       DateTime
-  endsAt         DateTime
-  isBooked       Boolean  @default(false)
+  id       Int      @id @default(autoincrement())
+  startsAt DateTime
+  endsAt   DateTime
+  isBooked Boolean  @default(false)
 
   consultationId Int
   consultation   Consultation @relation(fields: [consultationId], references: [id], onDelete: Cascade)
