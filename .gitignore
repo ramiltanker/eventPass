@@ -1,58 +1,53 @@
-# compiled output
-/dist
-/node_modules
-/build
-
-# Logs
-logs
-*.log
+# =========================
+# Node
+# =========================
+node_modules/
 npm-debug.log*
-pnpm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-lerna-debug.log*
+pnpm-debug.log*
 
-# OS
-.DS_Store
+# =========================
+# Build
+# =========================
+dist/
+build/
+coverage/
 
-# Tests
-/coverage
-/.nyc_output
-
-# IDEs and editors
-/.idea
-.project
-.classpath
-.c9/
-*.launch
-.settings/
-*.sublime-workspace
-
-# IDE - VSCode
-.vscode/*
-!.vscode/settings.json
-!.vscode/tasks.json
-!.vscode/launch.json
-!.vscode/extensions.json
-
-# dotenv environment variable files
+# =========================
+# Environment variables
+# =========================
 .env
-.env.development.local
-.env.test.local
-.env.production.local
 .env.local
+.env.development
+.env.test
+.env.production
 
-# temp directory
-.temp
-.tmp
+# =========================
+# Prisma
+# =========================
+prisma/generated/
+.prisma/
 
-# Runtime data
-pids
-*.pid
-*.seed
-*.pid.lock
+# =========================
+# Logs
+# =========================
+logs/
+*.log
 
-# Diagnostic reports (https://nodejs.org/api/report.html)
-report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+# =========================
+# OS files
+# =========================
+.DS_Store
+Thumbs.db
 
-/generated/prisma
+# =========================
+# IDE
+# =========================
+.vscode/
+.idea/
+
+# =========================
+# Docker
+# =========================
+docker-data/
