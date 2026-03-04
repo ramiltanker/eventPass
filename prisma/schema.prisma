@@ -61,7 +61,24 @@ model Slot {
   consultationId Int
   consultation   Consultation @relation(fields: [consultationId], references: [id], onDelete: Cascade)
 
+  booking Booking?
+
   createdAt DateTime @default(now())
 
   @@unique([consultationId, startsAt])
+}
+
+model Booking {
+  id Int @id @default(autoincrement())
+
+  firstName  String
+  lastName   String
+  middleName String?
+  email      String
+  group      String
+
+  slotId Int @unique
+  slot   Slot @relation(fields: [slotId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
 }

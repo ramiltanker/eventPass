@@ -65,9 +65,11 @@ export class ConsultationsService {
   }
 
   async listOpen() {
+    const now = new Date();
+
     const items = await this.prisma.consultation.findMany({
       where: {
-        startsAt: { gte: new Date() },
+        startsAt: { gte: now },
       },
       orderBy: { startsAt: 'asc' },
       select: {
@@ -86,11 +88,35 @@ export class ConsultationsService {
       },
     });
 
+    if (items.length === 0) return [];
+
+    const stats = await this.prisma.slot.groupBy({
+      by: ['consultationId', 'isBooked'],
+      where: {
+        consultationId: { in: items.map((c) => c.id) },
+      },
+      _count: { _all: true },
+    });
+
+    const map = new Map<number, { total: number; booked: number }>();
+    for (const row of stats) {
+      const prev = map.get(row.consultationId) ?? { total: 0, booked: 0 };
+      const count = row._count._all;
+
+      prev.total += count;
+      if (row.isBooked) prev.booked += count;
+
+      map.set(row.consultationId, prev);
+    }
+
     return items.map((c) => {
       const parts = [c.teacher.lastName, c.teacher.firstName, c.teacher.middleName].filter(
         (x) => !!x && String(x).trim().length > 0,
       );
       const teacherName = parts.length > 0 ? parts.join(' ') : c.teacher.email;
+
+      const s = map.get(c.id) ?? { total: 0, booked: 0 };
+      const slotsAvailable = Math.max(0, s.total - s.booked);
 
       return {
         id: c.id,
@@ -99,7 +125,44 @@ export class ConsultationsService {
         endsAt: c.endsAt,
         teacherName,
         teacherAvatarUrl: null,
+
+        slotsTotal: s.total,
+        slotsBooked: s.booked,
+        slotsAvailable,
       };
     });
+  }
+
+  // list slots by consultation
+  async listSlots(consultationId: number) {
+    if (!Number.isInteger(consultationId) || consultationId <= 0) {
+      throw new BadRequestException('Invalid consultationId');
+    }
+
+    const consultation = await this.prisma.consultation.findUnique({
+      where: { id: consultationId },
+      select: { id: true, startsAt: true },
+    });
+
+    if (!consultation) {
+      throw new BadRequestException('Consultation not found');
+    }
+
+    if (consultation.startsAt < new Date()) {
+      return [];
+    }
+
+    const slots = await this.prisma.slot.findMany({
+      where: { consultationId },
+      orderBy: { startsAt: 'asc' },
+      select: {
+        id: true,
+        startsAt: true,
+        endsAt: true,
+        isBooked: true,
+      },
+    });
+
+    return slots;
   }
 }
