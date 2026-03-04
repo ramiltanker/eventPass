@@ -2,10 +2,14 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { PrismaService } from '../prisma/prisma.service';
 import { BookSlotDto } from './dto/book-slot.dto';
 import { Prisma } from '../../prisma/generated/prisma/client';
+import { MailService } from '../mail/mail.service';
 
 @Injectable()
 export class SlotsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private mail: MailService,
+  ) {}
 
   async book(slotId: number, dto: BookSlotDto) {
     if (!Number.isInteger(slotId) || slotId <= 0) {
@@ -18,8 +22,21 @@ export class SlotsService {
         id: true,
         isBooked: true,
         startsAt: true,
+        endsAt: true,
         consultationId: true,
-        consultation: { select: { subject: true } },
+        consultation: {
+          select: {
+            subject: true,
+            meetingLink: true,
+            teacher: {
+              select: {
+                firstName: true,
+                lastName: true,
+                middleName: true,
+              },
+            },
+          },
+        },
       },
     });
 
@@ -28,6 +45,8 @@ export class SlotsService {
     if (slot.startsAt <= new Date()) {
       throw new BadRequestException('Slot is in the past');
     }
+
+    const studentEmail = dto.email.trim().toLowerCase();
 
     try {
       const result = await this.prisma.$transaction(async (tx) => {
@@ -43,7 +62,7 @@ export class SlotsService {
             firstName: dto.firstName.trim(),
             lastName: dto.lastName.trim(),
             middleName: dto.middleName?.trim() || null,
-            email: dto.email.trim().toLowerCase(),
+            email: studentEmail,
             group: dto.group.trim(),
             slotId,
           },
@@ -59,6 +78,21 @@ export class SlotsService {
         return booking;
       });
 
+      const t = slot.consultation.teacher;
+      const teacherFullName = [t.lastName, t.firstName, t.middleName]
+        .filter((x) => !!x && String(x).trim().length > 0)
+        .join(' ')
+        .trim();
+
+      await this.mail.sendBookingConfirmation({
+        to: studentEmail,
+        subjectName: slot.consultation.subject,
+        teacherFullName,
+        startsAt: slot.startsAt,
+        endsAt: slot.endsAt,
+        meetingLink: slot.consultation.meetingLink,
+      });
+
       return {
         ok: true,
         bookingId: result.id,
@@ -66,6 +100,7 @@ export class SlotsService {
         consultationId: slot.consultationId,
         subject: slot.consultation.subject,
         startsAt: slot.startsAt,
+        endsAt: slot.endsAt,
       };
     } catch (e: any) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
