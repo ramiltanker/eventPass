@@ -34,7 +34,7 @@ export class AuthController {
 
     // В MVP вернём ссылку (потом отправим email)
     return {
-      inviteUrl: `http://localhost:3000/register?token=${token}`,
+      inviteUrl: `http://localhost:3001/invite/${token}`,
       expiresAt,
     };
   }
