@@ -1,4 +1,4 @@
-import { IsString, MinLength, MaxLength } from 'class-validator';
+import { IsString, MinLength, MaxLength, IsOptional } from 'class-validator';
 
 export class RegisterDto {
   @IsString()
@@ -14,10 +14,11 @@ export class RegisterDto {
   @MaxLength(50)
   lastName!: string;
 
+  @IsOptional()
   @IsString()
   @MinLength(1)
   @MaxLength(50)
-  middleName!: string;
+  middleName?: string;
 
   @IsString()
   @MinLength(8)
