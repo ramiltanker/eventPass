@@ -37,7 +37,11 @@ export class ConsultationsController {
     return this.service.listOpen();
   }
 
-  // NEW: slots for consultation
+  @Get(':id')
+  getById(@Param('id') id: string) {
+    return this.service.getById(Number(id));
+  }
+
   @Get(':id/slots')
   listSlots(@Param('id') id: string) {
     return this.service.listSlots(Number(id));
