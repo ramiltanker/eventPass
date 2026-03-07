@@ -124,8 +124,6 @@ export class ConsultationsService {
         startsAt: c.startsAt,
         endsAt: c.endsAt,
         teacherName,
-        teacherAvatarUrl: null,
-
         slotsTotal: s.total,
         slotsBooked: s.booked,
         slotsAvailable,
