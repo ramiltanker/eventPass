@@ -62,7 +62,7 @@ export class AuthService {
     token: string;
     firstName: string;
     lastName: string;
-    middleName: string;
+    middleName?: string;
     password: string;
   }) {
     const tokenHash = hashToken(dto.token);
@@ -88,7 +88,7 @@ export class AuthService {
           email,
           firstName: dto.firstName,
           lastName: dto.lastName,
-          middleName: dto.middleName,
+          middleName: dto.middleName ?? '',
           passwordHash,
           role: 'TEACHER',
         },
@@ -126,7 +126,7 @@ export class AuthService {
         email: user.email,
         firstName: user.firstName,
         lastName: user.lastName,
-        middleName: user.middleName,
+        middleName: user.middleName ?? '',
         role: user.role,
       },
       accessToken: this.signAccessToken(user.id),
