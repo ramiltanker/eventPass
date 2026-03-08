@@ -1,22 +1,27 @@
 import { IsInt, IsISO8601, IsOptional, IsString, Max, Min } from 'class-validator';
 
-export class CreateConsultationDto {
+export class UpdateConsultationDto {
+  @IsOptional()
   @IsString()
-  subject: string;
+  subject?: string;
 
+  @IsOptional()
   @IsISO8601()
-  startsAt: string;
+  startsAt?: string;
 
+  @IsOptional()
   @IsISO8601()
-  endsAt: string;
+  endsAt?: string;
 
+  @IsOptional()
   @IsInt()
   @Min(5)
   @Max(120)
-  slotDurationMinutes: number;
+  slotDurationMinutes?: number;
 
+  @IsOptional()
   @IsString()
-  meetingLink: string;
+  meetingLink?: string;
 
   @IsOptional()
   @IsString()

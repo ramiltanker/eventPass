@@ -1,14 +1,17 @@
 import {
   Body,
   Controller,
+  Delete,
   ForbiddenException,
   Get,
   Param,
+  Patch,
   Post,
   UseGuards,
 } from '@nestjs/common';
 import { ConsultationsService } from './consultations.service';
 import { CreateConsultationDto } from './dto/create-consultation.dto';
+import { UpdateConsultationDto } from './dto/update-consultation.dto';
 import {
   CurrentUser,
   CurrentUserType,
@@ -32,9 +35,52 @@ export class ConsultationsController {
     return this.service.create(user.userId, dto);
   }
 
+  @UseGuards(JwtAuthGuard)
+  @Get('my')
+  listMine(@CurrentUser() user: CurrentUserType) {
+    if (!user?.userId) {
+      throw new ForbiddenException('Unauthorized');
+    }
+    if (user.role !== 'TEACHER') {
+      throw new ForbiddenException('Only TEACHER can access own consultations');
+    }
+
+    return this.service.listMine(user.userId);
+  }
+
   @Get()
   listOpen() {
     return this.service.listOpen();
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch(':id')
+  update(
+    @Param('id') id: string,
+    @CurrentUser() user: CurrentUserType,
+    @Body() dto: UpdateConsultationDto,
+  ) {
+    if (!user?.userId) {
+      throw new ForbiddenException('Unauthorized');
+    }
+    if (user.role !== 'TEACHER') {
+      throw new ForbiddenException('Only TEACHER can update consultations');
+    }
+
+    return this.service.update(Number(id), user.userId, dto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Delete(':id')
+  remove(@Param('id') id: string, @CurrentUser() user: CurrentUserType) {
+    if (!user?.userId) {
+      throw new ForbiddenException('Unauthorized');
+    }
+    if (user.role !== 'TEACHER') {
+      throw new ForbiddenException('Only TEACHER can delete consultations');
+    }
+
+    return this.service.remove(Number(id), user.userId);
   }
 
   @Get(':id')
