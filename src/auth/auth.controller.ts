@@ -15,6 +15,8 @@ import {
   CurrentUserType,
 } from './decorators/current-user.decorator';
 import { JwtAuthGuard } from './jwt/jwt-auth.guard';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -58,5 +60,15 @@ export class AuthController {
   @Get('me')
   async me(@CurrentUser() user: CurrentUserType) {
     return this.auth.me(user.userId);
+  }
+
+  @Post('forgot-password')
+  forgotPassword(@Body() dto: ForgotPasswordDto) {
+    return this.auth.forgotPassword(dto.email);
+  }
+
+  @Post('reset-password')
+  resetPassword(@Body() dto: ResetPasswordDto) {
+    return this.auth.resetPassword(dto.token, dto.newPassword);
   }
 }

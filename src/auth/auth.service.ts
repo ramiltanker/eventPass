@@ -10,11 +10,14 @@ import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
 import { PrismaService } from '../prisma/prisma.service';
 import { generateInviteToken, hashToken } from './invite-token.util';
+import { randomBytes } from 'crypto';
+import { MailService } from 'src/mail/mail.service';
 
 @Injectable()
 export class AuthService {
   constructor(
-    private prisma: PrismaService,
+    private readonly prisma: PrismaService,
+    private readonly mailService: MailService,
     private jwt: JwtService,
   ) {}
 
@@ -158,5 +161,69 @@ export class AuthService {
     if (!secret || secret !== process.env.ADMIN_INVITE_SECRET) {
       throw new ForbiddenException('Forbidden');
     }
+  }
+
+  async forgotPassword(email: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { email },
+    });
+
+    // одинаковый ответ для безопасности
+    if (!user) {
+      return { message: 'Если email существует, письмо уже отправлено' };
+    }
+
+    const token = randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 1000 * 60 * 60);
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        resetToken: token,
+        resetTokenExpires: expiresAt,
+      },
+    });
+
+    const frontendUrl = process.env.FRONTEND_URL;
+    if (!frontendUrl) {
+      throw new Error('FRONTEND_URL is missing');
+    }
+
+    const resetLink = `${frontendUrl}/reset-password?token=${encodeURIComponent(token)}`;
+
+    await this.mailService.sendPasswordReset({
+      to: user.email,
+      resetLink,
+    });
+
+    return { message: 'Если email существует, письмо уже отправлено' };
+  }
+
+  async resetPassword(token: string, newPassword: string) {
+    const user = await this.prisma.user.findFirst({
+      where: {
+        resetToken: token,
+        resetTokenExpires: {
+          gt: new Date(),
+        },
+      },
+    });
+
+    if (!user) {
+      throw new BadRequestException('Invalid or expired token');
+    }
+
+    const passwordHash = await argon2.hash(newPassword);
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash,
+        resetToken: null,
+        resetTokenExpires: null,
+      },
+    });
+
+    return { message: 'Пароль успешно изменен' };
   }
 }
