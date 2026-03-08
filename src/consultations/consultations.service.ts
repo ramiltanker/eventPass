@@ -6,13 +6,13 @@ import { CreateConsultationDto } from './dto/create-consultation.dto';
 export class ConsultationsService {
   constructor(private prisma: PrismaService) {}
 
-  async create(dto: CreateConsultationDto) {
-    // ВАЖНО: User.id у тебя String (cuid), поэтому teacherId тоже должен быть String
-    // Временно: подставь реальный teacherId из БД (лучше взять из JWT позже)
-    const teacherId = 'TEMP_TEACHER_ID';
-
+  async create(teacherId: string, dto: CreateConsultationDto) {
     const startsAt = new Date(dto.startsAt);
     const endsAt = new Date(dto.endsAt);
+
+    if (!teacherId || String(teacherId).trim().length === 0) {
+      throw new BadRequestException('teacherId is required');
+    }
 
     if (Number.isNaN(startsAt.getTime())) {
       throw new BadRequestException('Invalid startsAt');
@@ -23,7 +23,6 @@ export class ConsultationsService {
     if (endsAt <= startsAt) {
       throw new BadRequestException('endsAt must be after startsAt');
     }
-
     if (startsAt <= new Date()) {
       throw new BadRequestException('Consultation must start in the future');
     }
@@ -35,11 +34,7 @@ export class ConsultationsService {
     }
 
     const slots: { startsAt: Date; endsAt: Date }[] = [];
-    for (
-      let t = startsAt.getTime();
-      t + slotMs <= endsAt.getTime();
-      t += slotMs
-    ) {
+    for (let t = startsAt.getTime(); t + slotMs <= endsAt.getTime(); t += slotMs) {
       slots.push({ startsAt: new Date(t), endsAt: new Date(t + slotMs) });
     }
     if (slots.length === 0) {
@@ -54,7 +49,6 @@ export class ConsultationsService {
         slotDurationMinutes: dto.slotDurationMinutes,
         meetingLink: dto.meetingLink,
         description: dto.description,
-        isOpen: dto.isOpen ?? true,
         teacherId,
         slots: {
           create: slots.map((s) => ({
@@ -71,10 +65,11 @@ export class ConsultationsService {
   }
 
   async listOpen() {
+    const now = new Date();
+
     const items = await this.prisma.consultation.findMany({
       where: {
-        isOpen: true,
-        startsAt: { gte: new Date() },
+        startsAt: { gte: now },
       },
       orderBy: { startsAt: 'asc' },
       select: {
@@ -93,14 +88,143 @@ export class ConsultationsService {
       },
     });
 
-    return items.map((c) => ({
-      id: c.id,
-      subject: c.subject,
-      startsAt: c.startsAt,
-      endsAt: c.endsAt,
-      teacherName:
-        `${c.teacher.lastName} ${c.teacher.firstName} ${c.teacher.middleName}`.trim(),
-      teacherAvatarUrl: null,
-    }));
+    if (items.length === 0) return [];
+
+    const stats = await this.prisma.slot.groupBy({
+      by: ['consultationId', 'isBooked'],
+      where: {
+        consultationId: { in: items.map((c) => c.id) },
+      },
+      _count: { _all: true },
+    });
+
+    const map = new Map<number, { total: number; booked: number }>();
+    for (const row of stats) {
+      const prev = map.get(row.consultationId) ?? { total: 0, booked: 0 };
+      const count = row._count._all;
+
+      prev.total += count;
+      if (row.isBooked) prev.booked += count;
+
+      map.set(row.consultationId, prev);
+    }
+
+    return items.map((c) => {
+      const parts = [c.teacher.lastName, c.teacher.firstName, c.teacher.middleName].filter(
+        (x) => !!x && String(x).trim().length > 0,
+      );
+      const teacherName = parts.length > 0 ? parts.join(' ') : c.teacher.email;
+
+      const s = map.get(c.id) ?? { total: 0, booked: 0 };
+      const slotsAvailable = Math.max(0, s.total - s.booked);
+
+      return {
+        id: c.id,
+        subject: c.subject,
+        startsAt: c.startsAt,
+        endsAt: c.endsAt,
+        teacherName,
+        slotsTotal: s.total,
+        slotsBooked: s.booked,
+        slotsAvailable,
+      };
+    });
+  }
+
+  async getById(consultationId: number) {
+    if (!Number.isInteger(consultationId) || consultationId <= 0) {
+      throw new BadRequestException('Invalid consultationId');
+    }
+
+    const consultation = await this.prisma.consultation.findUnique({
+      where: { id: consultationId },
+      select: {
+        id: true,
+        subject: true,
+        description: true,
+        startsAt: true,
+        endsAt: true,
+        teacher: {
+          select: {
+            firstName: true,
+            lastName: true,
+            middleName: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    if (!consultation) {
+      throw new BadRequestException('Consultation not found');
+    }
+
+    if (consultation.startsAt < new Date()) {
+      throw new BadRequestException('Consultation is no longer available');
+    }
+
+    const slotsTotal = await this.prisma.slot.count({
+      where: { consultationId },
+    });
+
+    const slotsBooked = await this.prisma.slot.count({
+      where: {
+        consultationId,
+        isBooked: true,
+      },
+    });
+
+    const parts = [
+      consultation.teacher.lastName,
+      consultation.teacher.firstName,
+      consultation.teacher.middleName,
+    ].filter((x) => !!x && String(x).trim().length > 0);
+
+    const teacherName =
+      parts.length > 0 ? parts.join(' ') : consultation.teacher.email;
+
+    return {
+      id: consultation.id,
+      subject: consultation.subject,
+      description: consultation.description,
+      startsAt: consultation.startsAt,
+      endsAt: consultation.endsAt,
+      teacherName,
+      slotsTotal,
+      slotsBooked,
+      slotsAvailable: Math.max(0, slotsTotal - slotsBooked),
+    };
+  }
+
+  async listSlots(consultationId: number) {
+    if (!Number.isInteger(consultationId) || consultationId <= 0) {
+      throw new BadRequestException('Invalid consultationId');
+    }
+
+    const consultation = await this.prisma.consultation.findUnique({
+      where: { id: consultationId },
+      select: { id: true, startsAt: true },
+    });
+
+    if (!consultation) {
+      throw new BadRequestException('Consultation not found');
+    }
+
+    if (consultation.startsAt < new Date()) {
+      return [];
+    }
+
+    const slots = await this.prisma.slot.findMany({
+      where: { consultationId },
+      orderBy: { startsAt: 'asc' },
+      select: {
+        id: true,
+        startsAt: true,
+        endsAt: true,
+        isBooked: true,
+      },
+    });
+
+    return slots;
   }
 }
