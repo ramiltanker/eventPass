@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Headers,
+  Patch,
   Post,
   UseGuards,
 } from '@nestjs/common';
@@ -17,6 +18,7 @@ import {
 import { JwtAuthGuard } from './jwt/jwt-auth.guard';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { UpdateMeDto } from './dto/update-me.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -34,7 +36,6 @@ export class AuthController {
       dto.expiresInDays ?? 7,
     );
 
-    // В MVP вернём ссылку (потом отправим email)
     return {
       inviteUrl: `http://localhost:3001/invite/${token}`,
       expiresAt,
@@ -60,6 +61,15 @@ export class AuthController {
   @Get('me')
   async me(@CurrentUser() user: CurrentUserType) {
     return this.auth.me(user.userId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('me')
+  async updateMe(
+    @CurrentUser() user: CurrentUserType,
+    @Body() dto: UpdateMeDto,
+  ) {
+    return this.auth.updateMe(user.userId, dto);
   }
 
   @Post('forgot-password')
