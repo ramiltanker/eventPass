@@ -129,4 +129,77 @@ export class MailService {
       html,
     });
   }
+
+  async sendPasswordReset(params: { to: string; resetLink: string }) {
+    const from = process.env.MAIL_FROM || process.env.MAIL_USER;
+    if (!from) throw new Error('MAIL_FROM or MAIL_USER is missing');
+
+    const accent = '#941B0C';
+    const safeResetLink = params.resetLink.trim();
+
+    const subject = 'EventPass: восстановление пароля';
+
+    const text =
+      `Вы запросили восстановление пароля.\n\n` +
+      `Для установки нового пароля перейдите по ссылке:\n${safeResetLink}\n\n` +
+      `Если вы не запрашивали восстановление, просто проигнорируйте это письмо.\n`;
+
+    const html = `
+<!doctype html>
+<html lang="ru">
+  <body style="margin:0;padding:0;background:#ffffff;font-family:Arial,Helvetica,sans-serif;color:#111;">
+    <div style="max-width:640px;margin:0 auto;padding:24px;">
+      <div style="border:1px solid #eee;border-radius:12px;overflow:hidden;">
+        <div style="background:${accent};padding:18px 20px;">
+          <div style="color:#fff;font-size:18px;font-weight:700;">
+            EventPass
+          </div>
+          <div style="color:#fff;opacity:0.95;font-size:14px;margin-top:6px;">
+            Восстановление пароля
+          </div>
+        </div>
+
+        <div style="padding:20px;">
+          <div style="font-size:16px;font-weight:700;margin-bottom:10px;">
+            Сброс пароля
+          </div>
+
+          <div style="color:#333;font-size:14px;line-height:1.5;">
+            Вы запросили установку нового пароля для аккаунта EventPass.
+          </div>
+
+          <div style="margin-top:16px;">
+            <a href="${safeResetLink}"
+               style="display:inline-block;background:${accent};color:#fff;text-decoration:none;padding:12px 16px;border-radius:10px;font-weight:700;">
+              Сбросить пароль
+            </a>
+          </div>
+
+          <div style="margin-top:14px;color:#666;font-size:13px;line-height:1.35;word-break:break-all;">
+            Если кнопка не работает, откройте ссылку вручную:<br />
+            <a href="${safeResetLink}">${safeResetLink}</a>
+          </div>
+
+          <div style="margin-top:14px;color:#666;font-size:13px;line-height:1.35;">
+            Если вы не запрашивали восстановление пароля, просто проигнорируйте это письмо.
+          </div>
+
+          <div style="margin-top:18px;border-top:1px solid #eee;padding-top:14px;color:#999;font-size:12px;">
+            EventPass - уведомление отправлено автоматически.
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
+    `.trim();
+
+    await this.transporter.sendMail({
+      from,
+      to: params.to,
+      subject,
+      text,
+      html,
+    });
+  }
 }
