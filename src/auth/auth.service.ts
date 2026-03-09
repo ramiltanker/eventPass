@@ -12,6 +12,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { generateInviteToken, hashToken } from './invite-token.util';
 import { randomBytes } from 'crypto';
 import { MailService } from 'src/mail/mail.service';
+import { UpdateMeDto } from './dto/update-me.dto';
 
 @Injectable()
 export class AuthService {
@@ -156,7 +157,61 @@ export class AuthService {
     return user;
   }
 
-  // простой “админ-чек” для MVP (позже заменим на нормальную админ-роль)
+  async updateMe(userId: string, dto: UpdateMeDto) {
+    const data: {
+      firstName?: string;
+      lastName?: string;
+      middleName?: string;
+    } = {};
+
+    if (dto.firstName !== undefined) {
+      const firstName = dto.firstName.trim();
+
+      if (!firstName) {
+        throw new BadRequestException('Имя не может быть пустым');
+      }
+
+      data.firstName = firstName;
+    }
+
+    if (dto.lastName !== undefined) {
+      const lastName = dto.lastName.trim();
+
+      if (!lastName) {
+        throw new BadRequestException('Фамилия не может быть пустой');
+      }
+
+      data.lastName = lastName;
+    }
+
+    if (dto.middleName !== undefined) {
+      data.middleName = dto.middleName?.trim() ?? '';
+    }
+
+    if (!Object.keys(data).length) {
+      throw new BadRequestException('Нет данных для обновления');
+    }
+
+    try {
+      return await this.prisma.user.update({
+        where: { id: userId },
+        data,
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+          middleName: true,
+          role: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+    } catch {
+      throw new NotFoundException('Пользователь не найден');
+    }
+  }
+
   assertAdminSecret(secret: string | undefined) {
     if (!secret || secret !== process.env.ADMIN_INVITE_SECRET) {
       throw new ForbiddenException('Forbidden');
@@ -168,7 +223,6 @@ export class AuthService {
       where: { email },
     });
 
-    // одинаковый ответ для безопасности
     if (!user) {
       return { message: 'Если email существует, письмо уже отправлено' };
     }
