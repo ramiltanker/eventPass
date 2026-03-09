@@ -1,10 +1,11 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
+import { UserRole } from 'prisma/generated/prisma/enums';
 
-type JwtPayload = {
+export type JwtPayload = {
   sub: string;
-  role: 'TEACHER';
+  role: UserRole;
 };
 
 @Injectable()
@@ -20,8 +21,13 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
   }
 
   validate(payload: JwtPayload) {
-    if (!payload?.sub) throw new UnauthorizedException();
-    // Всё, что вернём здесь — окажется в req.user
-    return { userId: payload.sub, role: payload.role };
+    if (!payload?.sub) {
+      throw new UnauthorizedException();
+    }
+
+    return {
+      userId: payload.sub,
+      role: payload.role,
+    };
   }
 }

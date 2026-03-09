@@ -4,7 +4,7 @@ export class MeResponseDto {
   firstName!: string;
   lastName!: string;
   middleName!: string | null;
-  role!: 'TEACHER';
+  role!: string;
   createdAt!: Date;
   updatedAt!: Date;
 }

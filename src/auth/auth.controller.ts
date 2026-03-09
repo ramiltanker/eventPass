@@ -1,10 +1,13 @@
 import {
   Body,
   Controller,
+  ForbiddenException,
   Get,
   Headers,
   Patch,
+  Param,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
@@ -19,27 +22,50 @@ import { JwtAuthGuard } from './jwt/jwt-auth.guard';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { UpdateMeDto } from './dto/update-me.dto';
+import { ListInvitesQueryDto } from './dto/list-invites-query.dto';
+import { UserRole } from 'prisma/generated/prisma/enums';
 
 @Controller('auth')
 export class AuthController {
   constructor(private auth: AuthService) {}
 
+  @UseGuards(JwtAuthGuard)
   @Post('invites')
   async createInvite(
-    @Headers('x-admin-secret') adminSecret: string | undefined,
+    @CurrentUser() user: CurrentUserType,
     @Body() dto: CreateInviteDto,
   ) {
-    this.auth.assertAdminSecret(adminSecret);
+    if (user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('Only ADMIN can create invites');
+    }
 
-    const { token, expiresAt } = await this.auth.createInvite(
-      dto.email,
-      dto.expiresInDays ?? 7,
-    );
+    return this.auth.createInvite(dto.email, dto.expiresInDays ?? 7);
+  }
 
-    return {
-      inviteUrl: `http://localhost:3001/invite/${token}`,
-      expiresAt,
-    };
+  @UseGuards(JwtAuthGuard)
+  @Get('invites')
+  async getInvites(
+    @CurrentUser() user: CurrentUserType,
+    @Query() query: ListInvitesQueryDto,
+  ) {
+    if (user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('Only ADMIN can view invites');
+    }
+
+    return this.auth.getInvites(query.status ?? 'all');
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('invites/:id/revoke')
+  async revokeInvite(
+    @CurrentUser() user: CurrentUserType,
+    @Param('id') id: string,
+  ) {
+    if (user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('Only ADMIN can revoke invites');
+    }
+
+    return this.auth.revokeInvite(id);
   }
 
   @Post('validate-invite')

@@ -24,7 +24,10 @@ export class ConsultationsController {
 
   @UseGuards(JwtAuthGuard)
   @Post()
-  create(@CurrentUser() user: CurrentUserType, @Body() dto: CreateConsultationDto) {
+  create(
+    @CurrentUser() user: CurrentUserType,
+    @Body() dto: CreateConsultationDto,
+  ) {
     if (!user?.userId) {
       throw new ForbiddenException('Unauthorized');
     }

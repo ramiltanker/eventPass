@@ -1,7 +1,6 @@
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   Injectable,
   NotFoundException,
   UnauthorizedException,
@@ -13,42 +12,176 @@ import { generateInviteToken, hashToken } from './invite-token.util';
 import { randomBytes } from 'crypto';
 import { MailService } from 'src/mail/mail.service';
 import { UpdateMeDto } from './dto/update-me.dto';
+import { JwtPayload } from './jwt/jwt.strategy';
+import { UserRole } from 'prisma/generated/prisma/enums';
+
+import { encryptInviteToken, decryptInviteToken } from './invite-crypto.util';
 
 @Injectable()
 export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly mailService: MailService,
-    private jwt: JwtService,
+    private readonly jwt: JwtService,
   ) {}
 
-  private signAccessToken(userId: string) {
-    return this.jwt.sign({ sub: userId, role: 'TEACHER' }, { expiresIn: '7d' });
+  private normalizeEmail(email: string) {
+    return email.trim().toLowerCase();
+  }
+
+  private getInviteStatus(invite: {
+    usedAt: Date | null;
+    expiresAt: Date;
+  }): 'active' | 'used' | 'expired' {
+    if (invite.usedAt) return 'used';
+    if (invite.expiresAt.getTime() < Date.now()) return 'expired';
+    return 'active';
+  }
+
+  private signAccessToken(userId: string, role: UserRole) {
+    return this.jwt.sign<JwtPayload>(
+      { sub: userId, role },
+      { expiresIn: '7d' },
+    );
   }
 
   async createInvite(email: string, expiresInDays = 7) {
+    const normalizedEmail = this.normalizeEmail(email);
+
     const existingUser = await this.prisma.user.findUnique({
-      where: { email },
+      where: { email: normalizedEmail },
     });
-    if (existingUser) throw new ConflictException('User already exists');
+
+    if (existingUser) {
+      throw new ConflictException('User already exists');
+    }
+
+    const frontendUrl = process.env.FRONTEND_URL;
+    if (!frontendUrl) {
+      throw new Error('FRONTEND_URL is missing');
+    }
 
     const token = generateInviteToken();
     const tokenHash = hashToken(token);
+    const tokenEncrypted = encryptInviteToken(token);
+
     const expiresAt = new Date(
       Date.now() + expiresInDays * 24 * 60 * 60 * 1000,
     );
 
-    await this.prisma.teacherInvite.upsert({
-      where: { email },
-      update: { tokenHash, expiresAt, usedAt: null },
-      create: { email, tokenHash, expiresAt },
+    const invite = await this.prisma.teacherInvite.upsert({
+      where: { email: normalizedEmail },
+      update: {
+        tokenHash,
+        tokenEncrypted,
+        expiresAt,
+        usedAt: null,
+      },
+      create: {
+        email: normalizedEmail,
+        tokenHash,
+        tokenEncrypted,
+        expiresAt,
+      },
+      select: {
+        id: true,
+        email: true,
+        expiresAt: true,
+        usedAt: true,
+        createdAt: true,
+        tokenEncrypted: true,
+      },
     });
 
-    return { token, expiresAt };
+    const inviteUrl = `${frontendUrl.replace(/\/$/, '')}/invite/${token}`;
+
+    return {
+      id: invite.id,
+      email: invite.email,
+      inviteUrl,
+      expiresAt: invite.expiresAt,
+      usedAt: invite.usedAt,
+      createdAt: invite.createdAt,
+      status: this.getInviteStatus(invite),
+    };
+  }
+
+  async getInvites(status: 'all' | 'active' | 'used' | 'expired' = 'all') {
+    const frontendUrl = process.env.FRONTEND_URL;
+    if (!frontendUrl) {
+      throw new Error('FRONTEND_URL is missing');
+    }
+
+    const invites = await this.prisma.teacherInvite.findMany({
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        email: true,
+        expiresAt: true,
+        usedAt: true,
+        createdAt: true,
+        tokenEncrypted: true,
+      },
+    });
+
+    const mapped = invites.map((invite) => {
+      const status = this.getInviteStatus(invite);
+
+      let inviteUrl: string | null = null;
+
+      if (status === 'active') {
+        const token = decryptInviteToken(invite.tokenEncrypted);
+        inviteUrl = `${frontendUrl.replace(/\/$/, '')}/invite/${token}`;
+      }
+
+      return {
+        id: invite.id,
+        email: invite.email,
+        expiresAt: invite.expiresAt,
+        usedAt: invite.usedAt,
+        createdAt: invite.createdAt,
+        status,
+        inviteUrl,
+      };
+    });
+
+    if (status === 'all') {
+      return mapped;
+    }
+
+    return mapped.filter((invite) => invite.status === status);
+  }
+
+  async revokeInvite(id: string) {
+    const invite = await this.prisma.teacherInvite.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        email: true,
+        expiresAt: true,
+        usedAt: true,
+        createdAt: true,
+      },
+    });
+
+    if (!invite) {
+      throw new NotFoundException('Invite not found');
+    }
+
+    if (invite.usedAt) {
+      throw new BadRequestException('Used invite cannot be revoked');
+    }
+
+    await this.prisma.teacherInvite.delete({
+      where: { id },
+    });
+
+    return { success: true };
   }
 
   async validateInvite(token: string) {
     const tokenHash = hashToken(token);
+
     const invite = await this.prisma.teacherInvite.findFirst({
       where: { tokenHash },
       select: { email: true, expiresAt: true, usedAt: true },
@@ -74,15 +207,28 @@ export class AuthService {
     const invite = await this.prisma.teacherInvite.findFirst({
       where: { tokenHash },
     });
-    if (!invite) throw new BadRequestException('Invalid invite');
-    if (invite.usedAt) throw new BadRequestException('Invite already used');
-    if (invite.expiresAt.getTime() < Date.now())
+
+    if (!invite) {
+      throw new BadRequestException('Invalid invite');
+    }
+
+    if (invite.usedAt) {
+      throw new BadRequestException('Invite already used');
+    }
+
+    if (invite.expiresAt.getTime() < Date.now()) {
       throw new BadRequestException('Invite expired');
+    }
 
     const email = invite.email;
 
-    const exists = await this.prisma.user.findUnique({ where: { email } });
-    if (exists) throw new ConflictException('User already exists');
+    const exists = await this.prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (exists) {
+      throw new ConflictException('User already exists');
+    }
 
     const passwordHash = await argon2.hash(dto.password);
 
@@ -90,11 +236,11 @@ export class AuthService {
       const created = await tx.user.create({
         data: {
           email,
-          firstName: dto.firstName,
-          lastName: dto.lastName,
-          middleName: dto.middleName ?? '',
+          firstName: dto.firstName.trim(),
+          lastName: dto.lastName.trim(),
+          middleName: dto.middleName?.trim() || null,
           passwordHash,
-          role: 'TEACHER',
+          role: UserRole.TEACHER,
         },
         select: {
           id: true,
@@ -114,15 +260,27 @@ export class AuthService {
       return created;
     });
 
-    return { user, accessToken: this.signAccessToken(user.id) };
+    return {
+      user,
+      accessToken: this.signAccessToken(user.id, user.role),
+    };
   }
 
   async login(email: string, password: string) {
-    const user = await this.prisma.user.findUnique({ where: { email } });
-    if (!user) throw new UnauthorizedException('Invalid credentials');
+    const normalizedEmail = this.normalizeEmail(email);
+
+    const user = await this.prisma.user.findUnique({
+      where: { email: normalizedEmail },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
 
     const ok = await argon2.verify(user.passwordHash, password);
-    if (!ok) throw new UnauthorizedException('Invalid credentials');
+    if (!ok) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
 
     return {
       user: {
@@ -130,10 +288,10 @@ export class AuthService {
         email: user.email,
         firstName: user.firstName,
         lastName: user.lastName,
-        middleName: user.middleName ?? '',
+        middleName: user.middleName,
         role: user.role,
       },
-      accessToken: this.signAccessToken(user.id),
+      accessToken: this.signAccessToken(user.id, user.role),
     };
   }
 
@@ -152,7 +310,9 @@ export class AuthService {
       },
     });
 
-    if (!user) throw new NotFoundException('Пользователь не найден');
+    if (!user) {
+      throw new NotFoundException('Пользователь не найден');
+    }
 
     return user;
   }
@@ -212,15 +372,11 @@ export class AuthService {
     }
   }
 
-  assertAdminSecret(secret: string | undefined) {
-    if (!secret || secret !== process.env.ADMIN_INVITE_SECRET) {
-      throw new ForbiddenException('Forbidden');
-    }
-  }
-
   async forgotPassword(email: string) {
+    const normalizedEmail = this.normalizeEmail(email);
+
     const user = await this.prisma.user.findUnique({
-      where: { email },
+      where: { email: normalizedEmail },
     });
 
     if (!user) {
@@ -243,7 +399,7 @@ export class AuthService {
       throw new Error('FRONTEND_URL is missing');
     }
 
-    const resetLink = `${frontendUrl}/reset-password?token=${encodeURIComponent(token)}`;
+    const resetLink = `${frontendUrl.replace(/\/$/, '')}/reset-password?token=${encodeURIComponent(token)}`;
 
     await this.mailService.sendPasswordReset({
       to: user.email,
