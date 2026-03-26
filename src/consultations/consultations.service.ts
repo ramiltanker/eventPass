@@ -475,17 +475,6 @@ export class ConsultationsService {
       teacherId,
     );
 
-    if (consultation.startsAt <= new Date()) {
-      throw new BadRequestException('Past consultations cannot be updated');
-    }
-
-    const bookingsCount = await this.countAnyBookings(consultationId);
-
-    if (bookingsCount > 0) {
-      throw new BadRequestException(
-        'Consultation with bookings cannot be updated',
-      );
-    }
 
     const currentLocation = parseConsultationLocation(consultation.meetingLink);
 
@@ -574,17 +563,6 @@ export class ConsultationsService {
       teacherId,
     );
 
-    if (consultation.startsAt <= new Date()) {
-      throw new BadRequestException('Past consultations cannot be deleted');
-    }
-
-    const bookingsCount = await this.countAnyBookings(consultationId);
-
-    if (bookingsCount > 0) {
-      throw new BadRequestException(
-        'Consultation with bookings cannot be deleted',
-      );
-    }
 
     await this.prisma.$transaction(async (tx) => {
       await tx.slot.deleteMany({
