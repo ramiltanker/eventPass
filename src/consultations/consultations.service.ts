@@ -9,6 +9,10 @@ import { CreateConsultationDto } from './dto/create-consultation.dto';
 import { UpdateConsultationDto } from './dto/update-consultation.dto';
 import { BookSlotDto } from '../slots/dto/book-slot.dto';
 import { MailService } from '../mail/mail.service';
+import {
+  buildStoredConsultationLocation,
+  parseConsultationLocation,
+} from './consultation-location.util';
 
 @Injectable()
 export class ConsultationsService {
@@ -286,6 +290,11 @@ export class ConsultationsService {
     }
 
     const withoutIntervals = dto.withoutIntervals ?? false;
+    const storedLocation = buildStoredConsultationLocation({
+      isOnline: dto.isOnline,
+      meetingLink: dto.meetingLink,
+      audienceNumber: dto.audienceNumber,
+    });
 
     const schedule = withoutIntervals
       ? {
@@ -322,7 +331,7 @@ export class ConsultationsService {
         endsAt: schedule.endsAt,
         withoutIntervals,
         slotDurationMinutes: schedule.slotDurationMinutes,
-        meetingLink: dto.meetingLink,
+        meetingLink: storedLocation,
         description: dto.description,
         teacherId,
         slots: {
@@ -376,12 +385,15 @@ export class ConsultationsService {
         slotsBooked: 0,
         slotsAvailable: null,
       };
+      const location = parseConsultationLocation(item.meetingLink);
 
       return {
         id: item.id,
         subject: item.subject,
         description: item.description,
-        meetingLink: item.meetingLink,
+        meetingLink: location.meetingLink,
+        audienceNumber: location.audienceNumber,
+        isOnline: location.isOnline,
         withoutIntervals: item.withoutIntervals,
         slotDurationMinutes: item.slotDurationMinutes,
         startsAt: item.startsAt,
@@ -404,6 +416,7 @@ export class ConsultationsService {
       select: {
         id: true,
         subject: true,
+        meetingLink: true,
         withoutIntervals: true,
         startsAt: true,
         endsAt: true,
@@ -434,6 +447,7 @@ export class ConsultationsService {
         slotsBooked: 0,
         slotsAvailable: null,
       };
+      const location = parseConsultationLocation(item.meetingLink);
 
       return {
         id: item.id,
@@ -441,6 +455,8 @@ export class ConsultationsService {
         startsAt: item.startsAt,
         endsAt: item.endsAt,
         teacherName,
+        isOnline: location.isOnline,
+        audienceNumber: location.audienceNumber,
         withoutIntervals: item.withoutIntervals,
         slotsTotal: availability.slotsTotal,
         slotsBooked: availability.slotsBooked,
@@ -471,12 +487,19 @@ export class ConsultationsService {
       );
     }
 
+    const currentLocation = parseConsultationLocation(consultation.meetingLink);
+
     const nextSubject = dto.subject ?? consultation.subject;
     const nextDescription =
       dto.description !== undefined
         ? dto.description
         : (consultation.description ?? undefined);
-    const nextMeetingLink = dto.meetingLink ?? consultation.meetingLink;
+    const nextIsOnline = dto.isOnline ?? currentLocation.isOnline;
+    const nextStoredLocation = buildStoredConsultationLocation({
+      isOnline: nextIsOnline,
+      meetingLink: dto.meetingLink ?? currentLocation.meetingLink,
+      audienceNumber: dto.audienceNumber ?? currentLocation.audienceNumber,
+    });
     const nextWithoutIntervals =
       dto.withoutIntervals ?? consultation.withoutIntervals;
 
@@ -523,7 +546,7 @@ export class ConsultationsService {
         data: {
           subject: nextSubject,
           description: nextDescription,
-          meetingLink: nextMeetingLink,
+          meetingLink: nextStoredLocation,
           startsAt: schedule.startsAt,
           endsAt: schedule.endsAt,
           withoutIntervals: nextWithoutIntervals,
@@ -630,6 +653,7 @@ export class ConsultationsService {
       .filter((x) => !!x && String(x).trim().length > 0)
       .join(' ')
       .trim();
+    const location = parseConsultationLocation(consultation.meetingLink);
 
     await this.mail.sendBookingConfirmation({
       to: bookingInput.email,
@@ -637,7 +661,9 @@ export class ConsultationsService {
       teacherFullName,
       startsAt: consultation.startsAt,
       endsAt: consultation.endsAt,
-      meetingLink: consultation.meetingLink,
+      isOnline: location.isOnline,
+      meetingLink: location.meetingLink,
+      audienceNumber: location.audienceNumber,
     });
 
     return {
@@ -648,6 +674,8 @@ export class ConsultationsService {
       subject: consultation.subject,
       startsAt: consultation.startsAt,
       endsAt: consultation.endsAt,
+      isOnline: location.isOnline,
+      audienceNumber: location.audienceNumber,
     };
   }
 
@@ -662,6 +690,7 @@ export class ConsultationsService {
         description: true,
         startsAt: true,
         endsAt: true,
+        meetingLink: true,
         withoutIntervals: true,
         teacher: {
           select: {
@@ -683,6 +712,7 @@ export class ConsultationsService {
     }
 
     const teacherName = this.formatTeacherName(consultation.teacher);
+    const location = parseConsultationLocation(consultation.meetingLink);
 
     if (consultation.withoutIntervals) {
       const bookingsCount = await this.prisma.booking.count({
@@ -698,6 +728,8 @@ export class ConsultationsService {
         startsAt: consultation.startsAt,
         endsAt: consultation.endsAt,
         teacherName,
+        isOnline: location.isOnline,
+        audienceNumber: location.audienceNumber,
         withoutIntervals: true,
         slotsTotal: null,
         slotsBooked: bookingsCount,
@@ -725,6 +757,8 @@ export class ConsultationsService {
       startsAt: consultation.startsAt,
       endsAt: consultation.endsAt,
       teacherName,
+      isOnline: location.isOnline,
+      audienceNumber: location.audienceNumber,
       withoutIntervals: false,
       slotsTotal,
       slotsBooked,

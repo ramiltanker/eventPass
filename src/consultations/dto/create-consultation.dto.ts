@@ -18,6 +18,9 @@ export class CreateConsultationDto {
   @IsISO8601()
   endsAt: string;
 
+  @IsBoolean()
+  isOnline: boolean;
+
   @IsOptional()
   @IsBoolean()
   withoutIntervals?: boolean;
@@ -28,8 +31,13 @@ export class CreateConsultationDto {
   @Max(120)
   slotDurationMinutes?: number;
 
+  @IsOptional()
   @IsString()
-  meetingLink: string;
+  meetingLink?: string;
+
+  @IsOptional()
+  @IsString()
+  audienceNumber?: string;
 
   @IsOptional()
   @IsString()

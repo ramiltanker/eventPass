@@ -7,6 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { BookSlotDto } from './dto/book-slot.dto';
 import { Prisma } from '../../prisma/generated/prisma/client';
 import { MailService } from '../mail/mail.service';
+import { parseConsultationLocation } from '../consultations/consultation-location.util';
 
 @Injectable()
 export class SlotsService {
@@ -93,6 +94,7 @@ export class SlotsService {
         .filter((x) => !!x && String(x).trim().length > 0)
         .join(' ')
         .trim();
+      const location = parseConsultationLocation(slot.consultation.meetingLink);
 
       await this.mail.sendBookingConfirmation({
         to: studentEmail,
@@ -100,7 +102,9 @@ export class SlotsService {
         teacherFullName,
         startsAt: slot.startsAt,
         endsAt: slot.endsAt,
-        meetingLink: slot.consultation.meetingLink,
+        isOnline: location.isOnline,
+        meetingLink: location.meetingLink,
+        audienceNumber: location.audienceNumber,
       });
 
       return {
@@ -111,6 +115,8 @@ export class SlotsService {
         subject: slot.consultation.subject,
         startsAt: slot.startsAt,
         endsAt: slot.endsAt,
+        isOnline: location.isOnline,
+        audienceNumber: location.audienceNumber,
       };
     } catch (e: unknown) {
       if (

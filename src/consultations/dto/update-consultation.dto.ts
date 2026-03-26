@@ -23,6 +23,10 @@ export class UpdateConsultationDto {
 
   @IsOptional()
   @IsBoolean()
+  isOnline?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
   withoutIntervals?: boolean;
 
   @IsOptional()
@@ -34,6 +38,10 @@ export class UpdateConsultationDto {
   @IsOptional()
   @IsString()
   meetingLink?: string;
+
+  @IsOptional()
+  @IsString()
+  audienceNumber?: string;
 
   @IsOptional()
   @IsString()

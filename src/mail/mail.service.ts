@@ -39,7 +39,9 @@ export class MailService {
     teacherFullName: string;
     startsAt: Date;
     endsAt: Date;
-    meetingLink: string;
+    isOnline: boolean;
+    meetingLink?: string | null;
+    audienceNumber?: string | null;
   }) {
     const from = process.env.MAIL_FROM || process.env.MAIL_USER;
     if (!from) throw new Error('MAIL_FROM or MAIL_USER is missing');
@@ -52,6 +54,38 @@ export class MailService {
 
     const safeTeacher = params.teacherFullName?.trim() || 'Преподаватель';
     const safeMeetingLink = params.meetingLink?.trim() || '';
+    const safeAudienceNumber = params.audienceNumber?.trim() || '';
+    const formatLabel = params.isOnline ? 'Онлайн' : 'Очно';
+
+    const placeText = params.isOnline
+      ? `Ссылка: ${safeMeetingLink}\n`
+      : `Аудитория: ${safeAudienceNumber}\n`;
+
+    const placeHtml = params.isOnline
+      ? `
+            <div style="margin:0 0 8px 0;">
+              <span style="color:#666;">Ссылка:</span>
+              <span style="font-weight:700;word-break:break-all;">${safeMeetingLink}</span>
+            </div>
+        `
+      : `
+            <div style="margin:0 0 8px 0;">
+              <span style="color:#666;">Аудитория:</span>
+              <span style="font-weight:700;">${safeAudienceNumber}</span>
+            </div>
+        `;
+
+    const actionHtml =
+      params.isOnline && safeMeetingLink
+        ? `
+          <div style="margin-top:16px;">
+            <a href="${safeMeetingLink}"
+               style="display:inline-block;background:${accent};color:#fff;text-decoration:none;padding:12px 16px;border-radius:10px;font-weight:700;">
+              Перейти к консультации
+            </a>
+          </div>
+        `
+        : '';
 
     const text =
       `Вы записались на консультацию.\n\n` +
@@ -59,7 +93,8 @@ export class MailService {
       `Преподаватель: ${safeTeacher}\n` +
       `Дата: ${start.date}\n` +
       `Время: ${start.time} - ${end.time}\n` +
-      `Ссылка: ${safeMeetingLink}\n`;
+      `Формат: ${formatLabel}\n` +
+      placeText;
 
     const html = `
 <!doctype html>
@@ -94,18 +129,18 @@ export class MailService {
               <span style="color:#666;">Дата:</span>
               <span style="font-weight:700;">${start.date}</span>
             </div>
-            <div style="margin:0;">
+            <div style="margin:0 0 8px 0;">
               <span style="color:#666;">Время:</span>
               <span style="font-weight:700;">${start.time} - ${end.time}</span>
             </div>
+            <div style="margin:0 0 8px 0;">
+              <span style="color:#666;">Формат:</span>
+              <span style="font-weight:700;">${formatLabel}</span>
+            </div>
+            ${placeHtml}
           </div>
 
-          <div style="margin-top:16px;">
-            <a href="${safeMeetingLink}"
-               style="display:inline-block;background:${accent};color:#fff;text-decoration:none;padding:12px 16px;border-radius:10px;font-weight:700;">
-              Перейти к консультации
-            </a>
-          </div>
+          ${actionHtml}
 
           <div style="margin-top:14px;color:#666;font-size:13px;line-height:1.35;">
             Если вы не записывались на консультацию, просто проигнорируйте это письмо.
