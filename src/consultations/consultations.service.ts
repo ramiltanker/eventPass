@@ -24,9 +24,11 @@ export class ConsultationsService {
     middleName: string | null;
     email: string;
   }) {
-    const parts = [teacher.lastName, teacher.firstName, teacher.middleName].filter(
-      (x) => !!x && String(x).trim().length > 0,
-    );
+    const parts = [
+      teacher.lastName,
+      teacher.firstName,
+      teacher.middleName,
+    ].filter((x) => !!x && String(x).trim().length > 0);
 
     return parts.length > 0 ? parts.join(' ') : teacher.email;
   }
@@ -36,23 +38,26 @@ export class ConsultationsService {
       return new Map<number, { total: number; booked: number }>();
     }
 
-    const stats = await this.prisma.slot.groupBy({
-      by: ['consultationId', 'isBooked'],
+    const slots = await this.prisma.slot.findMany({
       where: {
         consultationId: { in: consultationIds },
       },
-      _count: { _all: true },
+      select: {
+        consultationId: true,
+        booking: {
+          select: { id: true },
+        },
+      },
     });
 
     const map = new Map<number, { total: number; booked: number }>();
 
-    for (const row of stats) {
+    for (const row of slots) {
       const prev = map.get(row.consultationId) ?? { total: 0, booked: 0 };
-      const count = row._count._all;
+      prev.total += 1;
 
-      prev.total += count;
-      if (row.isBooked) {
-        prev.booked += count;
+      if (row.booking) {
+        prev.booked += 1;
       }
 
       map.set(row.consultationId, prev);
@@ -61,7 +66,11 @@ export class ConsultationsService {
     return map;
   }
 
-  private buildSlots(startsAtInput: string, endsAtInput: string, slotDurationMinutes: number) {
+  private buildSlots(
+    startsAtInput: string,
+    endsAtInput: string,
+    slotDurationMinutes: number,
+  ) {
     const startsAt = new Date(startsAtInput);
     const endsAt = new Date(endsAtInput);
 
@@ -90,7 +99,11 @@ export class ConsultationsService {
 
     const slots: { startsAt: Date; endsAt: Date }[] = [];
 
-    for (let t = startsAt.getTime(); t + slotMs <= endsAt.getTime(); t += slotMs) {
+    for (
+      let t = startsAt.getTime();
+      t + slotMs <= endsAt.getTime();
+      t += slotMs
+    ) {
       slots.push({
         startsAt: new Date(t),
         endsAt: new Date(t + slotMs),
@@ -108,7 +121,10 @@ export class ConsultationsService {
     };
   }
 
-  private async getOwnedConsultationOrThrow(consultationId: number, teacherId: string) {
+  private async getOwnedConsultationOrThrow(
+    consultationId: number,
+    teacherId: string,
+  ) {
     this.validateConsultationId(consultationId);
 
     const consultation = await this.prisma.consultation.findUnique({
@@ -130,7 +146,9 @@ export class ConsultationsService {
     }
 
     if (consultation.teacherId !== teacherId) {
-      throw new ForbiddenException('You can manage only your own consultations');
+      throw new ForbiddenException(
+        'You can manage only your own consultations',
+      );
     }
 
     return consultation;
@@ -160,7 +178,6 @@ export class ConsultationsService {
           create: slots.map((slot) => ({
             startsAt: slot.startsAt,
             endsAt: slot.endsAt,
-            isBooked: false,
           })),
         },
       },
@@ -263,8 +280,15 @@ export class ConsultationsService {
     });
   }
 
-  async update(consultationId: number, teacherId: string, dto: UpdateConsultationDto) {
-    const consultation = await this.getOwnedConsultationOrThrow(consultationId, teacherId);
+  async update(
+    consultationId: number,
+    teacherId: string,
+    dto: UpdateConsultationDto,
+  ) {
+    const consultation = await this.getOwnedConsultationOrThrow(
+      consultationId,
+      teacherId,
+    );
 
     if (consultation.startsAt <= new Date()) {
       throw new BadRequestException('Past consultations cannot be updated');
@@ -273,7 +297,9 @@ export class ConsultationsService {
     const bookedSlotsCount = await this.prisma.slot.count({
       where: {
         consultationId,
-        isBooked: true,
+        booking: {
+          isNot: null,
+        },
       },
     });
 
@@ -285,12 +311,15 @@ export class ConsultationsService {
 
     const nextSubject = dto.subject ?? consultation.subject;
     const nextDescription =
-      dto.description !== undefined ? dto.description : (consultation.description ?? undefined);
+      dto.description !== undefined
+        ? dto.description
+        : (consultation.description ?? undefined);
     const nextMeetingLink = dto.meetingLink ?? consultation.meetingLink;
     const nextSlotDurationMinutes =
       dto.slotDurationMinutes ?? consultation.slotDurationMinutes;
 
-    const nextStartsAtInput = dto.startsAt ?? consultation.startsAt.toISOString();
+    const nextStartsAtInput =
+      dto.startsAt ?? consultation.startsAt.toISOString();
     const nextEndsAtInput = dto.endsAt ?? consultation.endsAt.toISOString();
 
     const { startsAt, endsAt, slots } = this.buildSlots(
@@ -317,7 +346,6 @@ export class ConsultationsService {
             create: slots.map((slot) => ({
               startsAt: slot.startsAt,
               endsAt: slot.endsAt,
-              isBooked: false,
             })),
           },
         },
@@ -332,7 +360,10 @@ export class ConsultationsService {
   }
 
   async remove(consultationId: number, teacherId: string) {
-    const consultation = await this.getOwnedConsultationOrThrow(consultationId, teacherId);
+    const consultation = await this.getOwnedConsultationOrThrow(
+      consultationId,
+      teacherId,
+    );
 
     if (consultation.startsAt <= new Date()) {
       throw new BadRequestException('Past consultations cannot be deleted');
@@ -341,7 +372,9 @@ export class ConsultationsService {
     const bookedSlotsCount = await this.prisma.slot.count({
       where: {
         consultationId,
-        isBooked: true,
+        booking: {
+          isNot: null,
+        },
       },
     });
 
@@ -404,7 +437,9 @@ export class ConsultationsService {
     const slotsBooked = await this.prisma.slot.count({
       where: {
         consultationId,
-        isBooked: true,
+        booking: {
+          isNot: null,
+        },
       },
     });
 
@@ -446,10 +481,17 @@ export class ConsultationsService {
         id: true,
         startsAt: true,
         endsAt: true,
-        isBooked: true,
+        booking: {
+          select: { id: true },
+        },
       },
     });
 
-    return slots;
+    return slots.map((slot) => ({
+      id: slot.id,
+      startsAt: slot.startsAt,
+      endsAt: slot.endsAt,
+      isBooked: !!slot.booking,
+    }));
   }
 }

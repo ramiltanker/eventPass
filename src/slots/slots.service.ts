@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { BookSlotDto } from './dto/book-slot.dto';
 import { Prisma } from '../../prisma/generated/prisma/client';
@@ -20,7 +24,6 @@ export class SlotsService {
       where: { id: slotId },
       select: {
         id: true,
-        isBooked: true,
         startsAt: true,
         endsAt: true,
         consultationId: true,
@@ -40,7 +43,9 @@ export class SlotsService {
       },
     });
 
-    if (!slot) throw new NotFoundException('Slot not found');
+    if (!slot) {
+      throw new NotFoundException('Slot not found');
+    }
 
     if (slot.startsAt <= new Date()) {
       throw new BadRequestException('Slot is in the past');
@@ -52,10 +57,21 @@ export class SlotsService {
       const result = await this.prisma.$transaction(async (tx) => {
         const fresh = await tx.slot.findUnique({
           where: { id: slotId },
-          select: { isBooked: true },
+          select: {
+            id: true,
+            booking: {
+              select: { id: true },
+            },
+          },
         });
-        if (!fresh) throw new NotFoundException('Slot not found');
-        if (fresh.isBooked) throw new BadRequestException('Slot already booked');
+
+        if (!fresh) {
+          throw new NotFoundException('Slot not found');
+        }
+
+        if (fresh.booking) {
+          throw new BadRequestException('Slot already booked');
+        }
 
         const booking = await tx.booking.create({
           data: {
@@ -66,12 +82,6 @@ export class SlotsService {
             group: dto.group.trim(),
             slotId,
           },
-          select: { id: true },
-        });
-
-        await tx.slot.update({
-          where: { id: slotId },
-          data: { isBooked: true },
           select: { id: true },
         });
 
@@ -102,8 +112,11 @@ export class SlotsService {
         startsAt: slot.startsAt,
         endsAt: slot.endsAt,
       };
-    } catch (e: any) {
-      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+    } catch (e: unknown) {
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2002'
+      ) {
         throw new BadRequestException('Slot already booked');
       }
       throw e;

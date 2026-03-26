@@ -63,7 +63,6 @@ model Slot {
   id       Int      @id @default(autoincrement())
   startsAt DateTime
   endsAt   DateTime
-  isBooked Boolean  @default(false)
 
   consultationId Int
   consultation   Consultation @relation(fields: [consultationId], references: [id], onDelete: Cascade)
