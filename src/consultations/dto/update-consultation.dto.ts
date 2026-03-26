@@ -1,4 +1,12 @@
-import { IsInt, IsISO8601, IsOptional, IsString, Max, Min } from 'class-validator';
+import {
+  IsBoolean,
+  IsInt,
+  IsISO8601,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+} from 'class-validator';
 
 export class UpdateConsultationDto {
   @IsOptional()
@@ -12,6 +20,10 @@ export class UpdateConsultationDto {
   @IsOptional()
   @IsISO8601()
   endsAt?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  withoutIntervals?: boolean;
 
   @IsOptional()
   @IsInt()

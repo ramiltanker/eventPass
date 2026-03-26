@@ -7,10 +7,15 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateConsultationDto } from './dto/create-consultation.dto';
 import { UpdateConsultationDto } from './dto/update-consultation.dto';
+import { BookSlotDto } from '../slots/dto/book-slot.dto';
+import { MailService } from '../mail/mail.service';
 
 @Injectable()
 export class ConsultationsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private mail: MailService,
+  ) {}
 
   private validateConsultationId(consultationId: number) {
     if (!Number.isInteger(consultationId) || consultationId <= 0) {
@@ -33,44 +38,17 @@ export class ConsultationsService {
     return parts.length > 0 ? parts.join(' ') : teacher.email;
   }
 
-  private async buildSlotStatsMap(consultationIds: number[]) {
-    if (consultationIds.length === 0) {
-      return new Map<number, { total: number; booked: number }>();
-    }
-
-    const slots = await this.prisma.slot.findMany({
-      where: {
-        consultationId: { in: consultationIds },
-      },
-      select: {
-        consultationId: true,
-        booking: {
-          select: { id: true },
-        },
-      },
-    });
-
-    const map = new Map<number, { total: number; booked: number }>();
-
-    for (const row of slots) {
-      const prev = map.get(row.consultationId) ?? { total: 0, booked: 0 };
-      prev.total += 1;
-
-      if (row.booking) {
-        prev.booked += 1;
-      }
-
-      map.set(row.consultationId, prev);
-    }
-
-    return map;
+  private normalizeBookingInput(dto: BookSlotDto) {
+    return {
+      firstName: dto.firstName.trim(),
+      lastName: dto.lastName.trim(),
+      middleName: dto.middleName?.trim() || null,
+      email: dto.email.trim().toLowerCase(),
+      group: dto.group.trim(),
+    };
   }
 
-  private buildSlots(
-    startsAtInput: string,
-    endsAtInput: string,
-    slotDurationMinutes: number,
-  ) {
+  private parseConsultationPeriod(startsAtInput: string, endsAtInput: string) {
     const startsAt = new Date(startsAtInput);
     const endsAt = new Date(endsAtInput);
 
@@ -89,6 +67,22 @@ export class ConsultationsService {
     if (startsAt <= new Date()) {
       throw new BadRequestException('Consultation must start in the future');
     }
+
+    return {
+      startsAt,
+      endsAt,
+    };
+  }
+
+  private buildSlots(
+    startsAtInput: string,
+    endsAtInput: string,
+    slotDurationMinutes: number,
+  ) {
+    const { startsAt, endsAt } = this.parseConsultationPeriod(
+      startsAtInput,
+      endsAtInput,
+    );
 
     const slotMs = slotDurationMinutes * 60 * 1000;
     const totalMs = endsAt.getTime() - startsAt.getTime();
@@ -121,6 +115,137 @@ export class ConsultationsService {
     };
   }
 
+  private async buildAvailabilityMap(consultationIds: number[]) {
+    if (consultationIds.length === 0) {
+      return new Map<
+        number,
+        {
+          withoutIntervals: boolean;
+          slotsTotal: number | null;
+          slotsBooked: number;
+          slotsAvailable: number | null;
+        }
+      >();
+    }
+
+    const [consultations, slots, directBookings] = await Promise.all([
+      this.prisma.consultation.findMany({
+        where: {
+          id: { in: consultationIds },
+        },
+        select: {
+          id: true,
+          withoutIntervals: true,
+        },
+      }),
+      this.prisma.slot.findMany({
+        where: {
+          consultationId: { in: consultationIds },
+        },
+        select: {
+          consultationId: true,
+          booking: {
+            select: { id: true },
+          },
+        },
+      }),
+      this.prisma.booking.findMany({
+        where: {
+          consultationId: { in: consultationIds },
+        },
+        select: {
+          consultationId: true,
+        },
+      }),
+    ]);
+
+    const slotStatsMap = new Map<number, { total: number; booked: number }>();
+
+    for (const row of slots) {
+      const prev = slotStatsMap.get(row.consultationId) ?? {
+        total: 0,
+        booked: 0,
+      };
+
+      prev.total += 1;
+
+      if (row.booking) {
+        prev.booked += 1;
+      }
+
+      slotStatsMap.set(row.consultationId, prev);
+    }
+
+    const directBookingCountMap = new Map<number, number>();
+
+    for (const booking of directBookings) {
+      if (typeof booking.consultationId !== 'number') {
+        continue;
+      }
+
+      directBookingCountMap.set(
+        booking.consultationId,
+        (directBookingCountMap.get(booking.consultationId) ?? 0) + 1,
+      );
+    }
+
+    const result = new Map<
+      number,
+      {
+        withoutIntervals: boolean;
+        slotsTotal: number | null;
+        slotsBooked: number;
+        slotsAvailable: number | null;
+      }
+    >();
+
+    for (const consultation of consultations) {
+      if (consultation.withoutIntervals) {
+        result.set(consultation.id, {
+          withoutIntervals: true,
+          slotsTotal: null,
+          slotsBooked: directBookingCountMap.get(consultation.id) ?? 0,
+          slotsAvailable: null,
+        });
+        continue;
+      }
+
+      const stats = slotStatsMap.get(consultation.id) ?? {
+        total: 0,
+        booked: 0,
+      };
+
+      result.set(consultation.id, {
+        withoutIntervals: false,
+        slotsTotal: stats.total,
+        slotsBooked: stats.booked,
+        slotsAvailable: Math.max(0, stats.total - stats.booked),
+      });
+    }
+
+    return result;
+  }
+
+  private async countAnyBookings(consultationId: number) {
+    const [bookedSlotsCount, directBookingsCount] = await Promise.all([
+      this.prisma.slot.count({
+        where: {
+          consultationId,
+          booking: {
+            isNot: null,
+          },
+        },
+      }),
+      this.prisma.booking.count({
+        where: {
+          consultationId,
+        },
+      }),
+    ]);
+
+    return bookedSlotsCount + directBookingsCount;
+  }
+
   private async getOwnedConsultationOrThrow(
     consultationId: number,
     teacherId: string,
@@ -135,6 +260,7 @@ export class ConsultationsService {
         subject: true,
         startsAt: true,
         endsAt: true,
+        withoutIntervals: true,
         slotDurationMinutes: true,
         meetingLink: true,
         description: true,
@@ -159,23 +285,48 @@ export class ConsultationsService {
       throw new BadRequestException('teacherId is required');
     }
 
-    const { startsAt, endsAt, slots } = this.buildSlots(
-      dto.startsAt,
-      dto.endsAt,
-      dto.slotDurationMinutes,
-    );
+    const withoutIntervals = dto.withoutIntervals ?? false;
+
+    const schedule = withoutIntervals
+      ? {
+          ...this.parseConsultationPeriod(dto.startsAt, dto.endsAt),
+          slots: [] as { startsAt: Date; endsAt: Date }[],
+          slotDurationMinutes: null as number | null,
+        }
+      : (() => {
+          const slotDurationMinutes = dto.slotDurationMinutes;
+
+          if (
+            typeof slotDurationMinutes !== 'number' ||
+            !Number.isInteger(slotDurationMinutes)
+          ) {
+            throw new BadRequestException('slotDurationMinutes is required');
+          }
+
+          const built = this.buildSlots(
+            dto.startsAt,
+            dto.endsAt,
+            slotDurationMinutes,
+          );
+
+          return {
+            ...built,
+            slotDurationMinutes,
+          };
+        })();
 
     const created = await this.prisma.consultation.create({
       data: {
         subject: dto.subject,
-        startsAt,
-        endsAt,
-        slotDurationMinutes: dto.slotDurationMinutes,
+        startsAt: schedule.startsAt,
+        endsAt: schedule.endsAt,
+        withoutIntervals,
+        slotDurationMinutes: schedule.slotDurationMinutes,
         meetingLink: dto.meetingLink,
         description: dto.description,
         teacherId,
         slots: {
-          create: slots.map((slot) => ({
+          create: schedule.slots.map((slot) => ({
             startsAt: slot.startsAt,
             endsAt: slot.endsAt,
           })),
@@ -203,6 +354,7 @@ export class ConsultationsService {
         subject: true,
         description: true,
         meetingLink: true,
+        withoutIntervals: true,
         slotDurationMinutes: true,
         startsAt: true,
         endsAt: true,
@@ -213,22 +365,30 @@ export class ConsultationsService {
       return [];
     }
 
-    const statsMap = await this.buildSlotStatsMap(items.map((item) => item.id));
+    const availabilityMap = await this.buildAvailabilityMap(
+      items.map((item) => item.id),
+    );
 
     return items.map((item) => {
-      const stats = statsMap.get(item.id) ?? { total: 0, booked: 0 };
+      const availability = availabilityMap.get(item.id) ?? {
+        withoutIntervals: item.withoutIntervals,
+        slotsTotal: null,
+        slotsBooked: 0,
+        slotsAvailable: null,
+      };
 
       return {
         id: item.id,
         subject: item.subject,
         description: item.description,
         meetingLink: item.meetingLink,
+        withoutIntervals: item.withoutIntervals,
         slotDurationMinutes: item.slotDurationMinutes,
         startsAt: item.startsAt,
         endsAt: item.endsAt,
-        slotsTotal: stats.total,
-        slotsBooked: stats.booked,
-        slotsAvailable: Math.max(0, stats.total - stats.booked),
+        slotsTotal: availability.slotsTotal,
+        slotsBooked: availability.slotsBooked,
+        slotsAvailable: availability.slotsAvailable,
       };
     });
   }
@@ -244,6 +404,7 @@ export class ConsultationsService {
       select: {
         id: true,
         subject: true,
+        withoutIntervals: true,
         startsAt: true,
         endsAt: true,
         teacher: {
@@ -261,11 +422,18 @@ export class ConsultationsService {
       return [];
     }
 
-    const statsMap = await this.buildSlotStatsMap(items.map((item) => item.id));
+    const availabilityMap = await this.buildAvailabilityMap(
+      items.map((item) => item.id),
+    );
 
     return items.map((item) => {
       const teacherName = this.formatTeacherName(item.teacher);
-      const stats = statsMap.get(item.id) ?? { total: 0, booked: 0 };
+      const availability = availabilityMap.get(item.id) ?? {
+        withoutIntervals: item.withoutIntervals,
+        slotsTotal: null,
+        slotsBooked: 0,
+        slotsAvailable: null,
+      };
 
       return {
         id: item.id,
@@ -273,9 +441,10 @@ export class ConsultationsService {
         startsAt: item.startsAt,
         endsAt: item.endsAt,
         teacherName,
-        slotsTotal: stats.total,
-        slotsBooked: stats.booked,
-        slotsAvailable: Math.max(0, stats.total - stats.booked),
+        withoutIntervals: item.withoutIntervals,
+        slotsTotal: availability.slotsTotal,
+        slotsBooked: availability.slotsBooked,
+        slotsAvailable: availability.slotsAvailable,
       };
     });
   }
@@ -294,18 +463,11 @@ export class ConsultationsService {
       throw new BadRequestException('Past consultations cannot be updated');
     }
 
-    const bookedSlotsCount = await this.prisma.slot.count({
-      where: {
-        consultationId,
-        booking: {
-          isNot: null,
-        },
-      },
-    });
+    const bookingsCount = await this.countAnyBookings(consultationId);
 
-    if (bookedSlotsCount > 0) {
+    if (bookingsCount > 0) {
       throw new BadRequestException(
-        'Consultation with booked slots cannot be updated',
+        'Consultation with bookings cannot be updated',
       );
     }
 
@@ -315,18 +477,41 @@ export class ConsultationsService {
         ? dto.description
         : (consultation.description ?? undefined);
     const nextMeetingLink = dto.meetingLink ?? consultation.meetingLink;
-    const nextSlotDurationMinutes =
-      dto.slotDurationMinutes ?? consultation.slotDurationMinutes;
+    const nextWithoutIntervals =
+      dto.withoutIntervals ?? consultation.withoutIntervals;
 
     const nextStartsAtInput =
       dto.startsAt ?? consultation.startsAt.toISOString();
     const nextEndsAtInput = dto.endsAt ?? consultation.endsAt.toISOString();
 
-    const { startsAt, endsAt, slots } = this.buildSlots(
-      nextStartsAtInput,
-      nextEndsAtInput,
-      nextSlotDurationMinutes,
-    );
+    const schedule = nextWithoutIntervals
+      ? {
+          ...this.parseConsultationPeriod(nextStartsAtInput, nextEndsAtInput),
+          slots: [] as { startsAt: Date; endsAt: Date }[],
+          slotDurationMinutes: null as number | null,
+        }
+      : (() => {
+          const nextSlotDurationMinutes =
+            dto.slotDurationMinutes ?? consultation.slotDurationMinutes;
+
+          if (
+            typeof nextSlotDurationMinutes !== 'number' ||
+            !Number.isInteger(nextSlotDurationMinutes)
+          ) {
+            throw new BadRequestException('slotDurationMinutes is required');
+          }
+
+          const built = this.buildSlots(
+            nextStartsAtInput,
+            nextEndsAtInput,
+            nextSlotDurationMinutes,
+          );
+
+          return {
+            ...built,
+            slotDurationMinutes: nextSlotDurationMinutes,
+          };
+        })();
 
     const updated = await this.prisma.$transaction(async (tx) => {
       await tx.slot.deleteMany({
@@ -339,11 +524,12 @@ export class ConsultationsService {
           subject: nextSubject,
           description: nextDescription,
           meetingLink: nextMeetingLink,
-          startsAt,
-          endsAt,
-          slotDurationMinutes: nextSlotDurationMinutes,
+          startsAt: schedule.startsAt,
+          endsAt: schedule.endsAt,
+          withoutIntervals: nextWithoutIntervals,
+          slotDurationMinutes: schedule.slotDurationMinutes,
           slots: {
-            create: slots.map((slot) => ({
+            create: schedule.slots.map((slot) => ({
               startsAt: slot.startsAt,
               endsAt: slot.endsAt,
             })),
@@ -369,18 +555,11 @@ export class ConsultationsService {
       throw new BadRequestException('Past consultations cannot be deleted');
     }
 
-    const bookedSlotsCount = await this.prisma.slot.count({
-      where: {
-        consultationId,
-        booking: {
-          isNot: null,
-        },
-      },
-    });
+    const bookingsCount = await this.countAnyBookings(consultationId);
 
-    if (bookedSlotsCount > 0) {
+    if (bookingsCount > 0) {
       throw new BadRequestException(
-        'Consultation with booked slots cannot be deleted',
+        'Consultation with bookings cannot be deleted',
       );
     }
 
@@ -400,6 +579,78 @@ export class ConsultationsService {
     };
   }
 
+  async bookWithoutIntervals(consultationId: number, dto: BookSlotDto) {
+    this.validateConsultationId(consultationId);
+
+    const consultation = await this.prisma.consultation.findUnique({
+      where: { id: consultationId },
+      select: {
+        id: true,
+        subject: true,
+        startsAt: true,
+        endsAt: true,
+        withoutIntervals: true,
+        meetingLink: true,
+        teacher: {
+          select: {
+            firstName: true,
+            lastName: true,
+            middleName: true,
+          },
+        },
+      },
+    });
+
+    if (!consultation) {
+      throw new NotFoundException('Consultation not found');
+    }
+
+    if (!consultation.withoutIntervals) {
+      throw new BadRequestException(
+        'This consultation requires selecting a time slot',
+      );
+    }
+
+    if (consultation.startsAt <= new Date()) {
+      throw new BadRequestException('Consultation is no longer available');
+    }
+
+    const bookingInput = this.normalizeBookingInput(dto);
+
+    const result = await this.prisma.booking.create({
+      data: {
+        ...bookingInput,
+        consultationId,
+      },
+      select: { id: true },
+    });
+
+    const t = consultation.teacher;
+    const teacherFullName = [t.lastName, t.firstName, t.middleName]
+      .filter((x) => !!x && String(x).trim().length > 0)
+      .join(' ')
+      .trim();
+
+    await this.mail.sendBookingConfirmation({
+      to: bookingInput.email,
+      subjectName: consultation.subject,
+      teacherFullName,
+      startsAt: consultation.startsAt,
+      endsAt: consultation.endsAt,
+      meetingLink: consultation.meetingLink,
+    });
+
+    return {
+      ok: true,
+      bookingId: result.id,
+      slotId: null,
+      consultationId: consultation.id,
+      subject: consultation.subject,
+      startsAt: consultation.startsAt,
+      endsAt: consultation.endsAt,
+    };
+  }
+
   async getById(consultationId: number) {
     this.validateConsultationId(consultationId);
 
@@ -411,6 +662,7 @@ export class ConsultationsService {
         description: true,
         startsAt: true,
         endsAt: true,
+        withoutIntervals: true,
         teacher: {
           select: {
             firstName: true,
@@ -423,11 +675,34 @@ export class ConsultationsService {
     });
 
     if (!consultation) {
-      throw new BadRequestException('Consultation not found');
+      throw new NotFoundException('Consultation not found');
     }
 
     if (consultation.startsAt < new Date()) {
       throw new BadRequestException('Consultation is no longer available');
+    }
+
+    const teacherName = this.formatTeacherName(consultation.teacher);
+
+    if (consultation.withoutIntervals) {
+      const bookingsCount = await this.prisma.booking.count({
+        where: {
+          consultationId,
+        },
+      });
+
+      return {
+        id: consultation.id,
+        subject: consultation.subject,
+        description: consultation.description,
+        startsAt: consultation.startsAt,
+        endsAt: consultation.endsAt,
+        teacherName,
+        withoutIntervals: true,
+        slotsTotal: null,
+        slotsBooked: bookingsCount,
+        slotsAvailable: null,
+      };
     }
 
     const slotsTotal = await this.prisma.slot.count({
@@ -443,8 +718,6 @@ export class ConsultationsService {
       },
     });
 
-    const teacherName = this.formatTeacherName(consultation.teacher);
-
     return {
       id: consultation.id,
       subject: consultation.subject,
@@ -452,6 +725,7 @@ export class ConsultationsService {
       startsAt: consultation.startsAt,
       endsAt: consultation.endsAt,
       teacherName,
+      withoutIntervals: false,
       slotsTotal,
       slotsBooked,
       slotsAvailable: Math.max(0, slotsTotal - slotsBooked),
@@ -463,11 +737,15 @@ export class ConsultationsService {
 
     const consultation = await this.prisma.consultation.findUnique({
       where: { id: consultationId },
-      select: { id: true, startsAt: true },
+      select: { id: true, startsAt: true, withoutIntervals: true },
     });
 
     if (!consultation) {
-      throw new BadRequestException('Consultation not found');
+      throw new NotFoundException('Consultation not found');
+    }
+
+    if (consultation.withoutIntervals) {
+      return [];
     }
 
     if (consultation.startsAt < new Date()) {

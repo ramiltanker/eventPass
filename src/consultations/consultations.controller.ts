@@ -12,6 +12,7 @@ import {
 import { ConsultationsService } from './consultations.service';
 import { CreateConsultationDto } from './dto/create-consultation.dto';
 import { UpdateConsultationDto } from './dto/update-consultation.dto';
+import { BookSlotDto } from '../slots/dto/book-slot.dto';
 import {
   CurrentUser,
   CurrentUserType,
@@ -94,5 +95,10 @@ export class ConsultationsController {
   @Get(':id/slots')
   listSlots(@Param('id') id: string) {
     return this.service.listSlots(Number(id));
+  }
+
+  @Post(':id/book')
+  bookWithoutIntervals(@Param('id') id: string, @Body() dto: BookSlotDto) {
+    return this.service.bookWithoutIntervals(Number(id), dto);
   }
 }
