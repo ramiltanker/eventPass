@@ -475,7 +475,7 @@ export class ConsultationsService {
       teacherId,
     );
 
-
+    const recipients = await this.getConsultationRecipients(consultationId);
     const currentLocation = parseConsultationLocation(consultation.meetingLink);
 
     const nextSubject = dto.subject ?? consultation.subject;
@@ -525,7 +525,64 @@ export class ConsultationsService {
           };
         })();
 
+    const changes = this.buildConsultationChanges({
+      current: {
+        subject: consultation.subject,
+        description: consultation.description ?? null,
+        startsAt: consultation.startsAt,
+        endsAt: consultation.endsAt,
+        withoutIntervals: consultation.withoutIntervals,
+        slotDurationMinutes: consultation.slotDurationMinutes,
+        meetingLink: consultation.meetingLink,
+      },
+      next: {
+        subject: nextSubject,
+        description: nextDescription ?? null,
+        startsAt: schedule.startsAt,
+        endsAt: schedule.endsAt,
+        withoutIntervals: nextWithoutIntervals,
+        slotDurationMinutes: schedule.slotDurationMinutes,
+        meetingLink: nextStoredLocation,
+      },
+    });
+
+    const needsSlotRebuild =
+      consultation.withoutIntervals !== nextWithoutIntervals ||
+      consultation.startsAt.getTime() !== schedule.startsAt.getTime() ||
+      consultation.endsAt.getTime() !== schedule.endsAt.getTime() ||
+      consultation.slotDurationMinutes !== schedule.slotDurationMinutes;
+
+    const existingBookingsCount = await this.countAnyBookings(consultationId);
+
+    if (existingBookingsCount > 0 && needsSlotRebuild) {
+      throw new BadRequestException(
+        'Нельзя менять дату, время, интервалы или формат консультации, если на нее уже есть записи',
+      );
+    }
+
     const updated = await this.prisma.$transaction(async (tx) => {
+      if (!needsSlotRebuild) {
+        return tx.consultation.update({
+          where: { id: consultationId },
+          data: {
+            subject: nextSubject,
+            description: nextDescription,
+            meetingLink: nextStoredLocation,
+          },
+          include: {
+            teacher: {
+              select: {
+                firstName: true,
+                lastName: true,
+                middleName: true,
+                email: true,
+              },
+            },
+            slots: true,
+          },
+        });
+      }
+
       await tx.slot.deleteMany({
         where: { consultationId },
       });
@@ -547,36 +604,131 @@ export class ConsultationsService {
             })),
           },
         },
-        include: { slots: true },
+        include: {
+          teacher: {
+            select: {
+              firstName: true,
+              lastName: true,
+              middleName: true,
+              email: true,
+            },
+          },
+          slots: true,
+        },
       });
     });
+
+    let notificationsSent = 0;
+
+    if (changes.length > 0 && recipients.length > 0) {
+      const teacherFullName = this.formatTeacherName(updated.teacher);
+      const updatedLocation = parseConsultationLocation(updated.meetingLink);
+
+      const mailResults = await Promise.allSettled(
+        recipients.map((recipient) =>
+          this.mail.sendConsultationUpdated({
+            to: recipient.email,
+            studentName: this.buildFullName({
+              firstName: recipient.firstName,
+              lastName: recipient.lastName,
+              middleName: recipient.middleName,
+            }),
+            subjectName: updated.subject,
+            teacherFullName,
+            startsAt: updated.startsAt,
+            endsAt: updated.endsAt,
+            isOnline: updatedLocation.isOnline,
+            meetingLink: updatedLocation.meetingLink,
+            audienceNumber: updatedLocation.audienceNumber,
+            changes,
+          }),
+        ),
+      );
+
+      notificationsSent = mailResults.filter(
+        (result) => result.status === 'fulfilled',
+      ).length;
+    }
 
     return {
       id: updated.id,
       slotsCreated: updated.slots.length,
+      notificationsSent,
     };
   }
 
   async remove(consultationId: number, teacherId: string) {
-    const consultation = await this.getOwnedConsultationOrThrow(
-      consultationId,
-      teacherId,
-    );
-
-
-    await this.prisma.$transaction(async (tx) => {
-      await tx.slot.deleteMany({
-        where: { consultationId },
-      });
-
-      await tx.consultation.delete({
-        where: { id: consultationId },
-      });
+    const consultation = await this.prisma.consultation.findUnique({
+      where: { id: consultationId },
+      select: {
+        id: true,
+        teacherId: true,
+        subject: true,
+        startsAt: true,
+        endsAt: true,
+        meetingLink: true,
+        teacher: {
+          select: {
+            firstName: true,
+            lastName: true,
+            middleName: true,
+            email: true,
+          },
+        },
+      },
     });
+
+    if (!consultation) {
+      throw new NotFoundException('Consultation not found');
+    }
+
+    if (consultation.teacherId !== teacherId) {
+      throw new ForbiddenException(
+        'You can manage only your own consultations',
+      );
+    }
+
+    const recipients = await this.getConsultationRecipients(consultationId);
+    const teacherFullName = this.formatTeacherName(consultation.teacher);
+    const location = parseConsultationLocation(consultation.meetingLink);
+
+    await this.prisma.consultation.delete({
+      where: { id: consultationId },
+    });
+
+    let notificationsSent = 0;
+
+    if (recipients.length > 0) {
+      const results = await Promise.allSettled(
+        recipients.map((recipient) =>
+          this.mail.sendConsultationCancelled({
+            to: recipient.email,
+            studentName: this.buildFullName({
+              firstName: recipient.firstName,
+              lastName: recipient.lastName,
+              middleName: recipient.middleName,
+            }),
+            subjectName: consultation.subject,
+            teacherFullName,
+            startsAt: consultation.startsAt,
+            endsAt: consultation.endsAt,
+            isOnline: location.isOnline,
+            meetingLink: location.meetingLink,
+            audienceNumber: location.audienceNumber,
+          }),
+        ),
+      );
+
+      notificationsSent = results.filter(
+        (result) => result.status === 'fulfilled',
+      ).length;
+    }
 
     return {
       ok: true,
       id: consultationId,
+      notificationsSent,
+      notificationsTotal: recipients.length,
     };
   }
 
@@ -783,5 +935,203 @@ export class ConsultationsService {
       endsAt: slot.endsAt,
       isBooked: !!slot.booking,
     }));
+  }
+
+  private formatRuDateTime(value: Date) {
+    const timeZone = process.env.MAIL_TIMEZONE || 'Europe/Moscow';
+
+    return new Intl.DateTimeFormat('ru-RU', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(value);
+  }
+
+  private buildFullName(person: {
+    firstName: string;
+    lastName: string;
+    middleName: string | null;
+  }) {
+    return [person.lastName, person.firstName, person.middleName]
+      .filter((x) => !!x && String(x).trim().length > 0)
+      .join(' ')
+      .trim();
+  }
+
+  private async getConsultationRecipients(consultationId: number) {
+    const [directBookings, slotBookings] = await Promise.all([
+      this.prisma.booking.findMany({
+        where: { consultationId },
+        select: {
+          email: true,
+          firstName: true,
+          lastName: true,
+          middleName: true,
+        },
+      }),
+      this.prisma.slot.findMany({
+        where: {
+          consultationId,
+          booking: {
+            isNot: null,
+          },
+        },
+        select: {
+          booking: {
+            select: {
+              email: true,
+              firstName: true,
+              lastName: true,
+              middleName: true,
+            },
+          },
+        },
+      }),
+    ]);
+
+    const recipients = new Map<
+      string,
+      {
+        email: string;
+        firstName: string;
+        lastName: string;
+        middleName: string | null;
+      }
+    >();
+
+    for (const booking of directBookings) {
+      const email = booking.email.trim().toLowerCase();
+
+      if (!recipients.has(email)) {
+        recipients.set(email, {
+          email,
+          firstName: booking.firstName,
+          lastName: booking.lastName,
+          middleName: booking.middleName,
+        });
+      }
+    }
+
+    for (const slot of slotBookings) {
+      if (!slot.booking) {
+        continue;
+      }
+
+      const email = slot.booking.email.trim().toLowerCase();
+
+      if (!recipients.has(email)) {
+        recipients.set(email, {
+          email,
+          firstName: slot.booking.firstName,
+          lastName: slot.booking.lastName,
+          middleName: slot.booking.middleName,
+        });
+      }
+    }
+
+    return Array.from(recipients.values());
+  }
+
+  private buildConsultationChanges(params: {
+    current: {
+      subject: string;
+      description: string | null;
+      startsAt: Date;
+      endsAt: Date;
+      withoutIntervals: boolean;
+      slotDurationMinutes: number | null;
+      meetingLink: string;
+    };
+    next: {
+      subject: string;
+      description: string | null;
+      startsAt: Date;
+      endsAt: Date;
+      withoutIntervals: boolean;
+      slotDurationMinutes: number | null;
+      meetingLink: string;
+    };
+  }) {
+    const changes: string[] = [];
+
+    const currentLocation = parseConsultationLocation(
+      params.current.meetingLink,
+    );
+    const nextLocation = parseConsultationLocation(params.next.meetingLink);
+
+    if (params.current.subject !== params.next.subject) {
+      changes.push(
+        `Предмет: «${params.current.subject}» → «${params.next.subject}»`,
+      );
+    }
+
+    if (
+      (params.current.description ?? '') !== (params.next.description ?? '')
+    ) {
+      changes.push('Описание консультации было изменено.');
+    }
+
+    if (params.current.startsAt.getTime() !== params.next.startsAt.getTime()) {
+      changes.push(
+        `Время начала: ${this.formatRuDateTime(params.current.startsAt)} → ${this.formatRuDateTime(params.next.startsAt)}`,
+      );
+    }
+
+    if (params.current.endsAt.getTime() !== params.next.endsAt.getTime()) {
+      changes.push(
+        `Время окончания: ${this.formatRuDateTime(params.current.endsAt)} → ${this.formatRuDateTime(params.next.endsAt)}`,
+      );
+    }
+
+    if (params.current.withoutIntervals !== params.next.withoutIntervals) {
+      changes.push(
+        params.next.withoutIntervals
+          ? 'Консультация переведена в формат без выбора интервалов.'
+          : 'Консультация переведена в формат с выбором временных интервалов.',
+      );
+    }
+
+    if (
+      params.current.slotDurationMinutes !== params.next.slotDurationMinutes
+    ) {
+      changes.push(
+        `Длительность интервала: ${params.current.slotDurationMinutes ?? '—'} мин. → ${params.next.slotDurationMinutes ?? '—'} мин.`,
+      );
+    }
+
+    if (currentLocation.isOnline !== nextLocation.isOnline) {
+      changes.push(
+        nextLocation.isOnline
+          ? 'Формат консультации изменен: теперь онлайн.'
+          : 'Формат консультации изменен: теперь очно.',
+      );
+    }
+
+    if (
+      currentLocation.isOnline &&
+      nextLocation.isOnline &&
+      (currentLocation.meetingLink ?? '') !== (nextLocation.meetingLink ?? '')
+    ) {
+      changes.push(
+        `Ссылка на консультацию: ${currentLocation.meetingLink ?? '—'} → ${nextLocation.meetingLink ?? '—'}`,
+      );
+    }
+
+    if (
+      !currentLocation.isOnline &&
+      !nextLocation.isOnline &&
+      (currentLocation.audienceNumber ?? '') !==
+        (nextLocation.audienceNumber ?? '')
+    ) {
+      changes.push(
+        `Аудитория: ${currentLocation.audienceNumber ?? '—'} → ${nextLocation.audienceNumber ?? '—'}`,
+      );
+    }
+
+    return changes;
   }
 }

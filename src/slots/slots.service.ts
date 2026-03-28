@@ -82,6 +82,7 @@ export class SlotsService {
             email: studentEmail,
             group: dto.group.trim(),
             slotId,
+            consultationId: slot.consultationId,
           },
           select: { id: true },
         });

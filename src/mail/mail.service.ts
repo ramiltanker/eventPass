@@ -237,4 +237,321 @@ export class MailService {
       html,
     });
   }
+
+  private escapeHtml(value: string) {
+    return value
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#39;');
+  }
+
+  private buildPlaceText(params: {
+    isOnline: boolean;
+    meetingLink?: string | null;
+    audienceNumber?: string | null;
+  }) {
+    const safeMeetingLink = params.meetingLink?.trim() || '';
+    const safeAudienceNumber = params.audienceNumber?.trim() || '';
+
+    return params.isOnline
+      ? `Ссылка: ${safeMeetingLink}\n`
+      : `Аудитория: ${safeAudienceNumber}\n`;
+  }
+
+  private buildPlaceHtml(params: {
+    isOnline: boolean;
+    meetingLink?: string | null;
+    audienceNumber?: string | null;
+  }) {
+    const safeMeetingLink = this.escapeHtml(params.meetingLink?.trim() || '');
+    const safeAudienceNumber = this.escapeHtml(
+      params.audienceNumber?.trim() || '',
+    );
+
+    return params.isOnline
+      ? `
+        <div style="margin:0 0 8px 0;">
+          <span style="color:#666;">Ссылка:</span>
+          <span style="font-weight:700;word-break:break-all;">${safeMeetingLink}</span>
+        </div>
+      `
+      : `
+        <div style="margin:0 0 8px 0;">
+          <span style="color:#666;">Аудитория:</span>
+          <span style="font-weight:700;">${safeAudienceNumber}</span>
+        </div>
+      `;
+  }
+
+  async sendConsultationUpdated(params: {
+    to: string;
+    studentName: string;
+    subjectName: string;
+    teacherFullName: string;
+    startsAt: Date;
+    endsAt: Date;
+    isOnline: boolean;
+    meetingLink?: string | null;
+    audienceNumber?: string | null;
+    changes: string[];
+  }) {
+    const from = process.env.MAIL_FROM || process.env.MAIL_USER;
+    if (!from) {
+      throw new Error('MAIL_FROM or MAIL_USER is missing');
+    }
+
+    const accent = '#941B0C';
+    const start = this.formatRuDateTime(params.startsAt);
+    const end = this.formatRuDateTime(params.endsAt);
+
+    const safeStudentName = params.studentName.trim() || 'Студент';
+    const safeTeacher = params.teacherFullName.trim() || 'Преподаватель';
+    const safeSubject = params.subjectName.trim() || 'Консультация';
+    const formatLabel = params.isOnline ? 'Онлайн' : 'Очно';
+
+    const changesText = params.changes.map((item) => `• ${item}`).join('\n');
+    const changesHtml = params.changes
+      .map(
+        (item) =>
+          `<li style="margin-bottom:8px;">${this.escapeHtml(item)}</li>`,
+      )
+      .join('');
+
+    const placeText = this.buildPlaceText({
+      isOnline: params.isOnline,
+      meetingLink: params.meetingLink,
+      audienceNumber: params.audienceNumber,
+    });
+
+    const placeHtml = this.buildPlaceHtml({
+      isOnline: params.isOnline,
+      meetingLink: params.meetingLink,
+      audienceNumber: params.audienceNumber,
+    });
+
+    const actionHtml =
+      params.isOnline && params.meetingLink?.trim()
+        ? `
+        <div style="margin-top:16px;">
+          <a href="${this.escapeHtml(params.meetingLink.trim())}"
+             style="display:inline-block;background:${accent};color:#fff;text-decoration:none;padding:12px 16px;border-radius:10px;font-weight:700;">
+            Перейти к консультации
+          </a>
+        </div>
+      `
+        : '';
+
+    const subject = `EventPass: изменена консультация по предмету "${safeSubject}"`;
+
+    const text =
+      `Здравствуйте, ${safeStudentName}.\n\n` +
+      `Консультация была изменена.\n\n` +
+      `Предмет: ${safeSubject}\n` +
+      `Преподаватель: ${safeTeacher}\n` +
+      `Дата: ${start.date}\n` +
+      `Время: ${start.time} - ${end.time}\n` +
+      `Формат: ${formatLabel}\n` +
+      placeText +
+      `\nИзменения:\n${changesText}\n`;
+
+    const html = `
+<!doctype html>
+<html lang="ru">
+  <body style="margin:0;padding:0;background:#ffffff;font-family:Arial,Helvetica,sans-serif;color:#111;">
+    <div style="max-width:640px;margin:0 auto;padding:24px;">
+      <div style="border:1px solid #eee;border-radius:12px;overflow:hidden;">
+        <div style="background:${accent};padding:18px 20px;">
+          <div style="color:#fff;font-size:18px;font-weight:700;">
+            EventPass
+          </div>
+          <div style="color:#fff;opacity:0.95;font-size:14px;margin-top:6px;">
+            Обновление консультации
+          </div>
+        </div>
+
+        <div style="padding:20px;">
+          <div style="font-size:16px;font-weight:700;margin-bottom:10px;">
+            Здравствуйте, ${this.escapeHtml(safeStudentName)}
+          </div>
+
+          <div style="color:#333;font-size:14px;line-height:1.5;margin-bottom:16px;">
+            Ваша консультация была изменена. Ниже актуальные данные и список изменений.
+          </div>
+
+          <div style="background:#fafafa;border:1px solid #eee;border-radius:12px;padding:14px 14px;">
+            <div style="margin:0 0 8px 0;">
+              <span style="color:#666;">Предмет:</span>
+              <span style="font-weight:700;">${this.escapeHtml(safeSubject)}</span>
+            </div>
+            <div style="margin:0 0 8px 0;">
+              <span style="color:#666;">Преподаватель:</span>
+              <span style="font-weight:700;">${this.escapeHtml(safeTeacher)}</span>
+            </div>
+            <div style="margin:0 0 8px 0;">
+              <span style="color:#666;">Дата:</span>
+              <span style="font-weight:700;">${this.escapeHtml(start.date)}</span>
+            </div>
+            <div style="margin:0 0 8px 0;">
+              <span style="color:#666;">Время:</span>
+              <span style="font-weight:700;">${this.escapeHtml(start.time)} - ${this.escapeHtml(end.time)}</span>
+            </div>
+            <div style="margin:0 0 8px 0;">
+              <span style="color:#666;">Формат:</span>
+              <span style="font-weight:700;">${this.escapeHtml(formatLabel)}</span>
+            </div>
+            ${placeHtml}
+          </div>
+
+          <div style="margin-top:16px;">
+            <div style="font-size:15px;font-weight:700;margin-bottom:8px;">
+              Что изменилось
+            </div>
+            <ul style="padding-left:20px;margin:0;color:#333;line-height:1.5;">
+              ${changesHtml}
+            </ul>
+          </div>
+
+          ${actionHtml}
+
+          <div style="margin-top:18px;border-top:1px solid #eee;padding-top:14px;color:#999;font-size:12px;">
+            EventPass - уведомление отправлено автоматически.
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
+  `.trim();
+
+    await this.transporter.sendMail({
+      from,
+      to: params.to,
+      subject,
+      text,
+      html,
+    });
+  }
+
+  async sendConsultationCancelled(params: {
+    to: string;
+    studentName: string;
+    subjectName: string;
+    teacherFullName: string;
+    startsAt: Date;
+    endsAt: Date;
+    isOnline: boolean;
+    meetingLink?: string | null;
+    audienceNumber?: string | null;
+  }) {
+    const from = process.env.MAIL_FROM || process.env.MAIL_USER;
+    if (!from) {
+      throw new Error('MAIL_FROM or MAIL_USER is missing');
+    }
+
+    const accent = '#941B0C';
+    const start = this.formatRuDateTime(params.startsAt);
+    const end = this.formatRuDateTime(params.endsAt);
+
+    const safeStudentName = params.studentName.trim() || 'Студент';
+    const safeTeacher = params.teacherFullName.trim() || 'Преподаватель';
+    const safeSubject = params.subjectName.trim() || 'Консультация';
+    const formatLabel = params.isOnline ? 'Онлайн' : 'Очно';
+
+    const placeText = this.buildPlaceText({
+      isOnline: params.isOnline,
+      meetingLink: params.meetingLink,
+      audienceNumber: params.audienceNumber,
+    });
+
+    const placeHtml = this.buildPlaceHtml({
+      isOnline: params.isOnline,
+      meetingLink: params.meetingLink,
+      audienceNumber: params.audienceNumber,
+    });
+
+    const subject = `EventPass: консультация по предмету "${safeSubject}" отменена`;
+
+    const text =
+      `Здравствуйте, ${safeStudentName}.\n\n` +
+      `Консультация была отменена.\n\n` +
+      `Предмет: ${safeSubject}\n` +
+      `Преподаватель: ${safeTeacher}\n` +
+      `Дата: ${start.date}\n` +
+      `Время: ${start.time} - ${end.time}\n` +
+      `Формат: ${formatLabel}\n` +
+      placeText +
+      `\nЕсли потребуется, преподаватель создаст новую консультацию позже.\n`;
+
+    const html = `
+<!doctype html>
+<html lang="ru">
+  <body style="margin:0;padding:0;background:#ffffff;font-family:Arial,Helvetica,sans-serif;color:#111;">
+    <div style="max-width:640px;margin:0 auto;padding:24px;">
+      <div style="border:1px solid #eee;border-radius:12px;overflow:hidden;">
+        <div style="background:${accent};padding:18px 20px;">
+          <div style="color:#fff;font-size:18px;font-weight:700;">
+            EventPass
+          </div>
+          <div style="color:#fff;opacity:0.95;font-size:14px;margin-top:6px;">
+            Отмена консультации
+          </div>
+        </div>
+
+        <div style="padding:20px;">
+          <div style="font-size:16px;font-weight:700;margin-bottom:10px;">
+            Здравствуйте, ${this.escapeHtml(safeStudentName)}
+          </div>
+
+          <div style="color:#333;font-size:14px;line-height:1.5;margin-bottom:16px;">
+            Консультация, на которую вы были записаны, была отменена.
+          </div>
+
+          <div style="background:#fafafa;border:1px solid #eee;border-radius:12px;padding:14px 14px;">
+            <div style="margin:0 0 8px 0;">
+              <span style="color:#666;">Предмет:</span>
+              <span style="font-weight:700;">${this.escapeHtml(safeSubject)}</span>
+            </div>
+            <div style="margin:0 0 8px 0;">
+              <span style="color:#666;">Преподаватель:</span>
+              <span style="font-weight:700;">${this.escapeHtml(safeTeacher)}</span>
+            </div>
+            <div style="margin:0 0 8px 0;">
+              <span style="color:#666;">Дата:</span>
+              <span style="font-weight:700;">${this.escapeHtml(start.date)}</span>
+            </div>
+            <div style="margin:0 0 8px 0;">
+              <span style="color:#666;">Время:</span>
+              <span style="font-weight:700;">${this.escapeHtml(start.time)} - ${this.escapeHtml(end.time)}</span>
+            </div>
+            <div style="margin:0 0 8px 0;">
+              <span style="color:#666;">Формат:</span>
+              <span style="font-weight:700;">${this.escapeHtml(formatLabel)}</span>
+            </div>
+            ${placeHtml}
+          </div>
+
+          <div style="margin-top:14px;color:#666;font-size:13px;line-height:1.35;">
+            Если потребуется, преподаватель создаст новую консультацию позже.
+          </div>
+
+          <div style="margin-top:18px;border-top:1px solid #eee;padding-top:14px;color:#999;font-size:12px;">
+            EventPass - уведомление отправлено автоматически.
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
+  `.trim();
+
+    await this.transporter.sendMail({
+      from,
+      to: params.to,
+      subject,
+      text,
+      html,
+    });
+  }
 }
