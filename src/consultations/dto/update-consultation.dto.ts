@@ -1,4 +1,12 @@
-import { IsInt, IsISO8601, IsOptional, IsString, Max, Min } from 'class-validator';
+import {
+  IsBoolean,
+  IsInt,
+  IsISO8601,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+} from 'class-validator';
 
 export class UpdateConsultationDto {
   @IsOptional()
@@ -14,6 +22,14 @@ export class UpdateConsultationDto {
   endsAt?: string;
 
   @IsOptional()
+  @IsBoolean()
+  isOnline?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  withoutIntervals?: boolean;
+
+  @IsOptional()
   @IsInt()
   @Min(5)
   @Max(120)
@@ -22,6 +38,10 @@ export class UpdateConsultationDto {
   @IsOptional()
   @IsString()
   meetingLink?: string;
+
+  @IsOptional()
+  @IsString()
+  audienceNumber?: string;
 
   @IsOptional()
   @IsString()

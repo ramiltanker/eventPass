@@ -47,14 +47,16 @@ model Consultation {
   subject             String
   startsAt            DateTime
   endsAt              DateTime
-  slotDurationMinutes Int
+  withoutIntervals    Boolean  @default(false)
+  slotDurationMinutes Int?
   meetingLink         String
   description         String?
 
   teacherId String
-  teacher   User   @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  teacher   User @relation(fields: [teacherId], references: [id], onDelete: Cascade)
 
-  slots Slot[]
+  slots    Slot[]
+  bookings Booking[]
 
   createdAt DateTime @default(now())
 }
@@ -83,8 +85,13 @@ model Booking {
   email      String
   group      String
 
-  slotId Int  @unique
-  slot   Slot @relation(fields: [slotId], references: [id], onDelete: Cascade)
+  consultationId Int?
+  consultation   Consultation? @relation(fields: [consultationId], references: [id], onDelete: Cascade)
+
+  slotId Int?  @unique
+  slot   Slot? @relation(fields: [slotId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
+
+  @@index([consultationId])
 }
