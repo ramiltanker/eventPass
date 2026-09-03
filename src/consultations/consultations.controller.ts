@@ -4,11 +4,15 @@ import {
   Delete,
   ForbiddenException,
   Get,
+  Header,
   Param,
   Patch,
   Post,
+  Res,
+  StreamableFile,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { ConsultationsService } from './consultations.service';
 import { CreateConsultationDto } from './dto/create-consultation.dto';
 import { UpdateConsultationDto } from './dto/update-consultation.dto';
@@ -50,6 +54,31 @@ export class ConsultationsController {
     }
 
     return this.service.listMine(user.userId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('my/export')
+  @Header(
+    'Content-Type',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  )
+  async exportMine(
+    @CurrentUser() user: CurrentUserType,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    if (!user?.userId) {
+      throw new ForbiddenException('Unauthorized');
+    }
+    if (user.role !== 'TEACHER') {
+      throw new ForbiddenException('Only TEACHER can export own consultations');
+    }
+
+    const buffer = await this.service.exportMyConsultationsToExcel(user.userId);
+    const filename = `consultations-${new Date().toISOString().slice(0, 10)}.xlsx`;
+
+    res.set('Content-Disposition', `attachment; filename="${filename}"`);
+
+    return new StreamableFile(buffer);
   }
 
   @Get()

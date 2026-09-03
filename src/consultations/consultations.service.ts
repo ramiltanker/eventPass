@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import ExcelJS from 'exceljs';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateConsultationDto } from './dto/create-consultation.dto';
 import { UpdateConsultationDto } from './dto/update-consultation.dto';
@@ -951,6 +952,28 @@ export class ConsultationsService {
     }).format(value);
   }
 
+  private formatRuDateOnly(value: Date) {
+    const timeZone = process.env.MAIL_TIMEZONE || 'Europe/Moscow';
+
+    return new Intl.DateTimeFormat('ru-RU', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(value);
+  }
+
+  private formatRuTimeOnly(value: Date) {
+    const timeZone = process.env.MAIL_TIMEZONE || 'Europe/Moscow';
+
+    return new Intl.DateTimeFormat('ru-RU', {
+      timeZone,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(value);
+  }
+
   private buildFullName(person: {
     firstName: string;
     lastName: string;
@@ -1133,5 +1156,147 @@ export class ConsultationsService {
     }
 
     return changes;
+  }
+
+  async exportMyConsultationsToExcel(teacherId: string): Promise<Buffer> {
+    if (!teacherId || String(teacherId).trim().length === 0) {
+      throw new BadRequestException('teacherId is required');
+    }
+
+    const consultations = await this.prisma.consultation.findMany({
+      where: { teacherId },
+      orderBy: { startsAt: 'asc' },
+      select: {
+        subject: true,
+        description: true,
+        startsAt: true,
+        endsAt: true,
+        withoutIntervals: true,
+        meetingLink: true,
+        bookings: {
+          select: {
+            firstName: true,
+            lastName: true,
+            middleName: true,
+            email: true,
+            group: true,
+          },
+        },
+        slots: {
+          orderBy: { startsAt: 'asc' },
+          select: {
+            startsAt: true,
+            endsAt: true,
+            booking: {
+              select: {
+                firstName: true,
+                lastName: true,
+                middleName: true,
+                email: true,
+                group: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Консультации');
+
+    sheet.columns = [
+      { header: 'Предмет', key: 'subject', width: 32 },
+      { header: 'Описание', key: 'description', width: 32 },
+      { header: 'Дата', key: 'date', width: 12 },
+      { header: 'Начало', key: 'start', width: 10 },
+      { header: 'Окончание', key: 'end', width: 10 },
+      { header: 'Формат', key: 'format', width: 10 },
+      { header: 'Ссылка / Аудитория', key: 'place', width: 32 },
+      { header: 'Статус', key: 'status', width: 16 },
+      { header: 'ФИО студента', key: 'studentName', width: 32 },
+      { header: 'Email', key: 'email', width: 28 },
+      { header: 'Группа', key: 'group', width: 14 },
+    ];
+
+    sheet.getRow(1).font = { bold: true };
+
+    for (const consultation of consultations) {
+      const location = parseConsultationLocation(consultation.meetingLink);
+      const format = location.isOnline ? 'Онлайн' : 'Очно';
+      const place = location.isOnline
+        ? (location.meetingLink ?? '')
+        : (location.audienceNumber ?? '');
+
+      const baseRow = {
+        subject: consultation.subject,
+        description: consultation.description ?? '',
+        format,
+        place,
+      };
+
+      if (consultation.withoutIntervals) {
+        const date = this.formatRuDateOnly(consultation.startsAt);
+        const start = this.formatRuTimeOnly(consultation.startsAt);
+        const end = this.formatRuTimeOnly(consultation.endsAt);
+
+        if (consultation.bookings.length === 0) {
+          sheet.addRow({
+            ...baseRow,
+            date,
+            start,
+            end,
+            status: 'Нет записей',
+            studentName: '',
+            email: '',
+            group: '',
+          });
+          continue;
+        }
+
+        for (const booking of consultation.bookings) {
+          sheet.addRow({
+            ...baseRow,
+            date,
+            start,
+            end,
+            status: 'Записан',
+            studentName: this.buildFullName(booking),
+            email: booking.email,
+            group: booking.group,
+          });
+        }
+        continue;
+      }
+
+      if (consultation.slots.length === 0) {
+        sheet.addRow({
+          ...baseRow,
+          date: this.formatRuDateOnly(consultation.startsAt),
+          start: '',
+          end: '',
+          status: 'Нет слотов',
+          studentName: '',
+          email: '',
+          group: '',
+        });
+        continue;
+      }
+
+      for (const slot of consultation.slots) {
+        sheet.addRow({
+          ...baseRow,
+          date: this.formatRuDateOnly(slot.startsAt),
+          start: this.formatRuTimeOnly(slot.startsAt),
+          end: this.formatRuTimeOnly(slot.endsAt),
+          status: slot.booking ? 'Забронировано' : 'Свободно',
+          studentName: slot.booking ? this.buildFullName(slot.booking) : '',
+          email: slot.booking?.email ?? '',
+          group: slot.booking?.group ?? '',
+        });
+      }
+    }
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    return Buffer.from(buffer);
   }
 }
